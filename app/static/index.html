@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>记忆智能体测试台</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --border: #e3e5e8;
+    --text: #1f2328; --muted: #6b7280;
+    --blue: #2563eb; --blue-bg: #eaf1fd;
+    --green: #16803c; --green-bg: #e8f5ec;
+    --amber: #9a6700; --amber-bg: #fdf3dd;
+    --gray-bg: #f1f2f4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+  header h1 { font-size: 15px; font-weight: 500; }
+  .uid-box { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .uid-box input { width: 160px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--gray-bg); color: var(--muted); }
+  .main { flex: 1; display: flex; min-height: 0; }
+  /* 聊天区 */
+  .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+  .msgs { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .bubble { max-width: 78%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .bubble.user { align-self: flex-end; background: var(--blue); color: #fff; border-bottom-right-radius: 4px; }
+  .bubble.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .bubble.bot.error { border-color: #e24b4a; background: #fcebeb; }
+  .mem-debug { align-self: flex-start; max-width: 85%; font-size: 12px; background: var(--blue-bg); border-radius: 10px; padding: 8px 12px; color: #1e4290; }
+  .mem-debug summary { cursor: pointer; color: var(--blue); font-weight: 500; }
+  .chip { display: inline-block; background: #fff; border: 1px solid #c4d4f5; border-radius: 8px; padding: 1px 7px; margin: 2px 3px 2px 0; }
+  .chip b { font-weight: 500; }
+  .change { margin-top: 3px; }
+  .change.added { color: var(--blue); }
+  .change.reinforced { color: var(--green); }
+  .change.superseded { color: var(--amber); }
+  .quick { padding: 8px 24px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .quick button { font-size: 12px; padding: 4px 10px; border: 1px solid var(--border); background: var(--panel); border-radius: 14px; cursor: pointer; color: var(--muted); }
+  .quick button:hover { border-color: var(--blue); color: var(--blue); }
+  .input-row { padding: 12px 24px 16px; display: flex; gap: 10px; }
+  .input-row textarea { flex: 1; resize: none; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; font-family: inherit; height: 46px; outline: none; }
+  .input-row textarea:focus { border-color: var(--blue); }
+  .input-row button { padding: 0 22px; background: var(--blue); color: #fff; border: none; border-radius: 10px; font-size: 14px; cursor: pointer; }
+  .input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* 记忆面板 */
+  .side { width: 340px; flex-shrink: 0; background: var(--panel); overflow-y: auto; padding: 16px; }
+  .side h2 { font-size: 14px; font-weight: 500; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
+  .side h2 button { font-size: 12px; padding: 3px 10px; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; cursor: pointer; color: var(--muted); }
+  .side h2 button:hover { color: var(--blue); border-color: var(--blue); }
+  .profile-card { background: var(--blue-bg); border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 14px; }
+  .fact-item { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+  .fact-item .k { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+  .fact-item .v { line-height: 1.4; }
+  .fact-item.superseded { opacity: 0.55; background: var(--gray-bg); }
+  .fact-item.superseded .v { text-decoration: line-through; }
+  .badge { float: right; font-size: 10px; padding: 1px 7px; border-radius: 8px; }
+  .badge.active { background: var(--green-bg); color: var(--green); }
+  .badge.superseded { background: var(--gray-bg); color: var(--muted); }
+  .fact-meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 0; }
+  .loading { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>记忆智能体测试台</h1>
+  <span class="tag">无 session · 仅凭 user_id 跨对话记忆</span>
+  <div class="uid-box">
+    user_id：<input id="userId" value="demo_user_1">
+    <button class="tag" style="cursor:pointer;border:none" onclick="switchUser()">切换</button>
+  </div>
+  <span class="tag" id="llmMode"></span>
+</header>
+
+<div class="main">
+  <div class="chat">
+    <div class="msgs" id="msgs">
+      <div class="empty">改一下 user_id 就是一个"新用户"。同一个 user_id 下随便聊，中途清空页面、换个时间再来，记忆都在。</div>
+    </div>
+    <div class="quick">
+      <button onclick="fill('我叫李明，在克雷登工业负责AI项目部，回复请用极简中文')">1. 自我介绍（冷启动）</button>
+      <button onclick="fill('我叫什么名字？我现在负责什么？')">2. 跨对话提问</button>
+      <button onclick="fill('以后叫我老李')">3. 改称呼（冲突消解）</button>
+      <button onclick="fill('我最近在推进证件系统一期，设计文档写到一半')">4. 新事实（多值并存）</button>
+      <button onclick="fill('把我之前说的偏好都列出来')">5. 记忆清单</button>
+      <button onclick="fill('我叫什么名字？我叫什么名字？我叫什么名字？')">6. 问句防污染测试</button>
+    </div>
+    <div class="input-row">
+      <textarea id="input" placeholder="输入消息，回车发送（Shift+回车换行）"></textarea>
+      <button id="sendBtn" onclick="send()">发送</button>
+    </div>
+  </div>
+
+  <div class="side">
+    <h2>长期记忆（L2 事实）<button onclick="loadMemory()">刷新</button></h2>
+    <div class="profile-card" id="profileCard">画像加载中…</div>
+    <div id="factList" class="loading">加载中…</div>
+    <p style="font-size:11px;color:var(--muted);margin-top:10px">
+      灰色删除线 = 已被新事实取代（superseded 谱系保留，不物理删除）。单条遗忘请调 DELETE /api/v1/memory/facts/{id}。
+    </p>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const KEY_LABEL = {
+  'identity.name': '姓名', 'work.current_focus': '工作重点',
+  'preference.like': '偏好', 'preference.style': '回复风格'
+};
+let currentUser = null;
+
+function fill(text) { $('input').value = text; $('input').focus(); }
+
+function switchUser() {
+  currentUser = null;
+  $('msgs').innerHTML = '<div class="empty">已切换到新对话上下文（页面层）。发送消息即开始。</div>';
+  loadMemory();
+}
+
+function addBubble(cls, text) {
+  const div = document.createElement('div');
+  div.className = 'bubble ' + cls;
+  div.textContent = text;
+  $('msgs').appendChild(div);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+  return div;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function renderDebug(m) {
+  const div = document.createElement('div');
+  div.className = 'mem-debug';
+  let html = `<summary>本轮记忆 · 注入 ${m.facts_injected.length} 条事实 / ${m.recent_messages_used} 条近期消息</summary>`;
+  if (m.display_name) html += `<div>画像称呼：${esc(m.display_name)}</div>`;
+  if (m.facts_injected.length) {
+    html += '<div style="margin-top:4px">' + m.facts_injected.map(f =>
+      `<span class="chip"><b>${esc(KEY_LABEL[f.key] || f.key)}</b>：${esc(f.value)} · 相关度 ${f.score}</span>`).join('') + '</div>';
+  }
+  for (const c of m.changes) {
+    const zh = {added: '新增记忆', reinforced: '印证加强', superseded: '取代旧忆'}[c.action] || c.action;
+    html += `<div class="change ${c.action}">[${zh}] ${esc(KEY_LABEL[c.key] || c.key)} = ${esc(c.value)}</div>`;
+  }
+  if (!m.changes.length) html += '<div class="change" style="color:var(--muted)">本轮无记忆变更</div>';
+  div.innerHTML = html;
+  $('msgs').appendChild(div);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+}
+
+async function send() {
+  const text = $('input').value.trim();
+  const uid = $('userId').value.trim();
+  if (!text || !uid) return;
+  if (uid !== currentUser) { currentUser = uid; loadMemory(); }
+  $('input').value = '';
+  addBubble('user', text);
+  const btn = $('sendBtn'); btn.disabled = true;
+  const waiting = addBubble('bot loading', '思考中…');
+  try {
+    const resp = await fetch('/api/v1/chat', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_id: uid, message: text})
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const d = await resp.json();
+    waiting.textContent = d.reply;
+    waiting.classList.remove('loading');
+    renderDebug(d.memory);
+    loadMemory();
+  } catch (e) {
+    waiting.textContent = '请求失败：' + e.message + '（检查后端是否运行）';
+    waiting.classList.add('error');
+  }
+  btn.disabled = false;
+  $('input').focus();
+}
+
+async function loadMemory() {
+  const uid = $('userId').value.trim();
+  if (!uid) return;
+  try {
+    const [factsRes, profRes] = await Promise.all([
+      fetch(`/api/v1/memory/facts?user_id=${encodeURIComponent(uid)}&include_superseded=true`),
+      fetch(`/api/v1/memory/profile/${encodeURIComponent(uid)}`)
+    ]);
+    const fd = await factsRes.json();
+    const list = $('factList');
+    if (!fd.items || !fd.items.length) {
+      list.innerHTML = '<div class="empty">该用户暂无记忆，先聊几句吧</div>';
+    } else {
+      list.innerHTML = fd.items.map(f => `
+        <div class="fact-item ${f.status}">
+          <span class="badge ${f.status}">${f.status}</span>
+          <div class="k">${esc(KEY_LABEL[f.key] || f.key)} · 置信度 ${f.confidence}</div>
+          <div class="v">${esc(f.value)}</div>
+          <div class="fact-meta">来源消息 #${f.source_message_id ?? '-'} · 更新于 ${f.updated_at ? f.updated_at.slice(0,10) : '-'}</div>
+        </div>`).join('');
+    }
+    if (profRes.ok) {
+      const p = await profRes.json();
+      $('profileCard').innerHTML = `<b>L3 画像</b><br>称呼：${esc(p.display_name ?? '未设置')}`;
+    } else {
+      $('profileCard').innerHTML = '<b>L3 画像</b><br>称呼：未设置';
+    }
+  } catch (e) {
+    $('factList').innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+$('input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+fetch('/health').then(r => r.json()).then(h => {
+  $('llmMode').textContent = '后端在线 v' + h.version + (h.db ? ' · DB ✓' : ' · DB ✗');
+}).catch(() => { $('llmMode').textContent = '后端离线'; });
+
+loadMemory();
+</script>
+</body>
+</html>
