@@ -155,6 +155,14 @@ score = 0.1（基线，冷启动保底）
 - **检索**：每轮对话组装上下文时，用当前问题做向量检索（Top-4，按 user_id 过滤），命中注入【知识库片段】块；计算在线程池执行避免阻塞事件循环
 - **优雅降级**：Milvus 不可达时检索返回空列表、入库返回 `stored=0 + error`，主对话链路完全不受影响；`GET /api/v1/kb/status` 查看状态，服务器重启 Milvus 后 `POST /api/v1/kb/reconnect` 重连
 - **注意**：`MILVUS_URI` 必须带 `http://` 前缀——pymilvus 会读取同名环境变量作为模块级默认连接串，无前缀会导致 import 崩溃；国内网络首次下载 embedding 模型需在 `.env` 配 `HF_ENDPOINT=https://hf-mirror.com`（模型已缓存后可留）
+- **版本兼容**：服务器 Milvus 为 **v2.4.4**，客户端须用 **pymilvus 2.4.x**（3.x 会报 `strconv.ParseInt: parsing "null"`）；pymilvus 2.4 依赖 `pkg_resources`，需 `setuptools<81`
+- **批量灌库**：`scripts/ingest_docs.py` 支持 PDF（pypdf）/ DOCX（python-docx，含表格）/ XLSX（openpyxl，按工作表）解析入向量库，图片跳过：
+
+```bash
+.venv/bin/python scripts/ingest_docs.py --user-id kld_user --dir docs/文档资料
+```
+
+已灌入 14 个模拟企业文档（404 块），对话时 user_id 用 `kld_user` 即可命中。
 
 ### 5.2 System prompt 结构
 

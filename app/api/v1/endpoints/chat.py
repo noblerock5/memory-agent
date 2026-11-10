@@ -12,6 +12,7 @@ from app.schemas.chat import (
     ChatResponse,
     EpisodicMsg,
     FactInjected,
+    KbHit,
     MemoryDebug,
     MemoryChange,
 )
