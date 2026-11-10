@@ -35,11 +35,17 @@ def _iter_sentences(text: str):
 REPLACE_KEY_PREFIXES = ("identity.", "work.")
 
 EXTRACT_SYSTEM_PROMPT = (
-    "你是记忆抽取器。从对话中抽取关于用户的稳定事实(身份/工作/偏好/长期承诺), "
-    "不抽取临时闲聊。key 建议取值: identity.name, work.current_focus, "
-    "preference.like, preference.style, goal.* 或自定义点分 key。"
+    "你是记忆抽取器。从对话中抽取两类稳定信息, 不抽取临时闲聊:\n"
+    "A. 用户属性: 身份/工作/偏好/长期承诺, key 建议 identity.name, work.current_focus, "
+    "preference.like, preference.style, goal.*。\n"
+    "B. 经验结论(对话中沉淀的可复用知识, 优先抽取): 某问题的解决方案(exp.solution.*)、"
+    "技术或业务决策及其原因(exp.decision.*)、踩坑与教训(exp.lesson.*)、验证过的结论(exp.finding.*)。"
+    "key 的最后一段用简短主题命名, 如 exp.solution.导入超时, exp.decision.队列选型。value 要自包含"
+    "(脱离上下文也能看懂), 包含'问题→结论'或'决策→原因'。\n"
+    "entity 字段: 用户属性填 user; 经验结论填 exp。\n"
     "只输出 JSON 数组, 元素形如 "
-    '[{"entity":"user","key":"identity.name","value":"李明","confidence":0.95}], '
+    '[{"entity":"user","key":"identity.name","value":"李明","confidence":0.95}, '
+    '{"entity":"exp","key":"exp.lesson.pg超时","value":"TSV大批量导入超时: 改用20并发+分批commit后稳定","confidence":0.85}], '
     "没有可抽取内容时输出 []。不要输出任何其他文字。"
 )
 

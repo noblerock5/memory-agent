@@ -49,9 +49,9 @@ LLM 接入层为 **OpenAI 兼容协议**，当前配置 DeepSeek 官方 API（`a
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `user_id` | String(64) | 记忆归属用户（多租户隔离键） |
-| `entity` | String(64) | 记忆主体，当前固定 `user`（预留扩展到项目/人物等实体） |
-| `key` | String(128) | 事实类别，点分命名：`identity.name` / `work.current_focus` / `preference.like` / `goal.*` 等 |
-| `value` | Text | 事实内容 |
+| `entity` | String(64) | 记忆主体：`user`（用户属性）或 `exp`（经验结论） |
+| `key` | String(128) | 事实类别，点分命名。用户属性：`identity.name` / `work.current_focus` / `preference.*` / `goal.*`；经验结论：`exp.solution.*`（解决方案）/ `exp.decision.*`（决策及原因）/ `exp.lesson.*`（踩坑教训）/ `exp.finding.*`（验证过的结论） |
+| `value` | Text | 事实内容（经验类要求自包含："问题→结论"或"决策→原因"，脱离上下文可读） |
 | `confidence` | Float | 置信度 0~1，同一事实被再次印证时 +0.05 |
 | `status` | String(16) | `active` 生效 / `superseded` 已被新事实取代 |
 | `source_message_id` | BigInteger | 来源消息 ID（溯源：这条记忆是从哪句话提炼的） |
@@ -87,7 +87,7 @@ flowchart LR
 
 ### 4.1 事实抽取（`app/services/memory_writer.py`）
 
-- **LLM 优先**：system prompt 要求只输出 JSON 数组（`entity/key/value/confidence`），对返回做代码围栏剥离与括号截取解析；解析失败**静默降级**到规则抽取，不阻塞对话。
+- **LLM 优先**：system prompt 要求只输出 JSON 数组（`entity/key/value/confidence`），抽取**两类**信息：A 用户属性（identity/work/preference/goal）；B **经验结论**（`exp.*`：解决方案/决策原因/踩坑教训/验证结论——对话中沉淀的可复用知识，同类问题不再从零开始）。对返回做代码围栏剥离与括号截取解析；解析失败**静默降级**到规则抽取，不阻塞对话。
 - **规则降级**：三个正则覆盖 `identity.name`（我叫/叫我/以后叫我）、`work.current_focus`（负责/我管理/在做）、`preference.like`（我喜欢/请用…）。
 - **防污染纪律（实测踩坑后加固）**：按句切分后，**疑问句整体跳过**；抽取值命中疑问代词（什么/谁/哪/怎么等）直接拒绝。背景：用户问"我叫什么名字？"曾被当成陈述句，抽出"什么名字"覆盖了正确记忆——错记落盘会被每轮当事实反复放大，纠正成本远高于漏记。
 
@@ -170,12 +170,17 @@ score = 0.1（基线，冷启动保底）
 ```
 你是用户的长期个人助手。以下是关于用户的持久记忆（跨对话有效）。
 【用户画像】称呼：老李
-【长期记忆】- identity.name：老李（置信度 0.95，更新于 2026-11-09）...
+【长期记忆·用户属性】- identity.name：老李（置信度 0.95，更新于 2026-11-09）...
+【长期记忆·经验结论】（可复用知识，同类问题直接复用）- exp.solution.TSV导入超时：改20并发+分批提交...
+【历史对话记录】（时间感知召回的原始消息，可引用原文）
+【知识库片段】（共享企业知识库 RAG 命中，引用时注明文档名）
 【使用规则】1.优先使用记忆；2.记忆与当前消息冲突时以当前消息为准并提示更新；
-           3.找不到的信息如实说明，不要编造。
+           3.找不到的信息如实说明，不要编造；4.历史记录中有相关内容直接引用原文。
 ```
 
 之后拼接最近 10 条历史消息（L0）与当前用户消息一起调用 LLM。对话回复（LLM 视角"投影"可能失真，但 L1 原始日志无损，随时可回溯）。
+
+**企业记忆四层对照**：企业静态知识=Milvus 共享知识库（RAG）、用户画像=`user_profiles`、经验记忆=`memory_facts` 中 `entity=exp` 的 `exp.*` 事实、会话历史=`chat_messages`。注意当前经验记忆按 user_id 隔离（谁教的就是谁的）；生产化时可增加"晋升"机制——验证过的经验晋升为组织级共享（类似知识库的 global 归属）。
 
 ## 6. API 一览
 

@@ -50,14 +50,28 @@ def build_system_prompt(
         lines.append(f"【用户画像】称呼：{profile.display_name}")
         lines.append("")
 
-    lines.append("【长期记忆】")
-    if facts:
-        for f in facts:
+    # L2 事实分两组: 用户属性 / 经验结论(exp.* 可复用的解决方案、决策、教训)
+    user_facts = [f for f in facts if not f["key"].startswith("exp.")]
+    exp_facts = [f for f in facts if f["key"].startswith("exp.")]
+
+    lines.append("【长期记忆·用户属性】")
+    if user_facts:
+        for f in user_facts:
             lines.append(
                 f"- {f['key']}：{f['value']}（置信度 {f['confidence']}，更新于 {_fmt_dt(f['updated_at'])}）"
             )
     else:
         lines.append("- （暂无记忆）")
+    lines.append("")
+
+    lines.append("【长期记忆·经验结论】（过往对话沉淀的可复用知识，同类问题直接复用，不要让用户从头再讲）")
+    if exp_facts:
+        for f in exp_facts:
+            lines.append(
+                f"- {f['key']}：{f['value']}（置信度 {f['confidence']}，更新于 {_fmt_dt(f['updated_at'])}）"
+            )
+    else:
+        lines.append("- （暂无，随对话积累）")
     lines.append("")
 
     if episodic:
@@ -67,7 +81,7 @@ def build_system_prompt(
         lines.append("")
 
     if kb_hits:
-        lines.append("【知识库片段】（从用户上传的个人文件中语义检索得到）")
+        lines.append("【知识库片段】（从共享企业知识库语义检索得到，引用时注明文档名）")
         for h in kb_hits:
             lines.append(f"- （{h['doc_name']} #{h['chunk_index']}，相关度 {h['score']}）{h['content'][:300]}")
         lines.append("")
