@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     RECENT_MESSAGE_LIMIT: int = 10
     MAX_FACTS_INJECTED: int = 8
 
+    # 知识库配置 (Milvus + 本地 embedding; MILVUS_URI 为空或不可达时自动降级)
+    # 注意: 必须带 http:// 前缀, pymilvus 会读取同名环境变量作为默认连接串
+    MILVUS_URI: str = "http://43.143.233.242:19530"
+    EMBED_MODEL: str = "BAAI/bge-small-zh-v1.5"
+    KB_CHUNK_SIZE: int = 500
+    KB_CHUNK_OVERLAP: int = 50
+    KB_TOP_K: int = 4
+
     @property
     def database_url(self) -> str:
         return (

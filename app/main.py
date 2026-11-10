@@ -37,15 +37,8 @@ app.add_middleware(
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
-# 静态测试页面 (路由优先于静态挂载, /api/* 与 /health 不受影响)
-from fastapi.staticfiles import StaticFiles  # noqa: E402
-import os  # noqa: E402
 
-_static_dir = os.path.join(os.path.dirname(__file__), "static")
-if os.path.isdir(_static_dir):
-    app.mount("/", StaticFiles(directory=_static_dir, html=True), name="static")
-
-
+# 健康检查 (必须先于静态挂载注册, 否则会被 "/" mount 拦截)
 @app.get("/health", tags=["system"])
 async def health():
     db_ok = True
@@ -55,3 +48,12 @@ async def health():
     except Exception:
         db_ok = False
     return {"status": "ok", "db": db_ok, "version": settings.APP_VERSION}
+
+
+# 静态测试页面 (已注册的 /api/* 与 /health 路由优先于 mount)
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+import os  # noqa: E402
+
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/", StaticFiles(directory=_static_dir, html=True), name="static")

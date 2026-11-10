@@ -104,15 +104,21 @@ flowchart LR
 ## 5. 读路径：每次提问如何组装上下文
 
 ```
-用户消息 → ① 查询改写 → ② 混合评分检索 → ③ system prompt 组装 → LLM
+用户消息 → ① 查询改写 → ② 混合评分检索 → ②' 情景记忆时间召回 → ②'' 知识库语义检索 → ③ system prompt 组装 → LLM
 ```
 
 ```mermaid
 flowchart LR
     A[用户消息] --> B[查询改写<br>关键词→key别名映射]
     B --> C[检索 active 事实<br>bigram重叠+别名+置信度+时间衰减]
-    C --> D[取 Top-K 条<br>MAX_FACTS_INJECTED=8]
-    D --> E[组装 system prompt<br>L3画像 + L2事实 + 使用规则]
+    C --> C2{时间意图?}
+    C2 -- "第一次/最早" --> C3[情景召回<br>全量消息按时间正序取最早]
+    C2 -- "上次/之前聊过" --> C4[情景召回<br>全量消息bigram检索]
+    C2 -- 无 --> D
+    C3 --> D[取 Top-K 条事实<br>MAX_FACTS_INJECTED=8]
+    C4 --> D
+    D --> K[知识库语义检索<br>Milvus 向量召回 不可达则降级]
+    K --> E[组装 system prompt<br>L3画像 + L2事实 + 情景记录 + 知识库片段]
     E --> F[近期10条消息 L0]
     F --> G[调用 LLM]
     G --> H[回复落盘 L1]
@@ -130,6 +136,26 @@ score = 0.1（基线，冷启动保底）
 
 按分数取 Top-8 注入。**诚实说明**：这是字符级评分，没有 embedding 语义召回，"我们之前讨论的那个架构问题"这类模糊指代召回不了——这是 demo 与生产级框架的主要差距之一（见 §8）。
 
+### 5.1.1 情景记忆时间召回（`memory_query.recall_episodic`，2026-11-10 新增）
+
+**动机（真实 bug 案例）**：用户问"我第一次提问的问题是什么？"答不出来。根因：事实检索只覆盖 `memory_facts` 结构化事实，原始消息历史只有最近 10 条窗口参与上下文，全量 `chat_messages` 没有任何读路径；且相关性评分带时间衰减——越旧的分数越低，与"第一次"的意图正好相反。
+
+**方案**：`detect_temporal_intent` 正则检测两类时间意图，路由到对应策略：
+
+| 意图 | 触发词 | 策略 |
+|---|---|---|
+| `first` | 第一次 / 最早 / 最开始 / 头一回… | 按时间正序取最早 4 条用户消息（锚点召回） |
+| `past` | 上次 / 之前 / 问过 / 聊过 / 记录… | 全量消息（≤2000 条保护）bigram 检索 Top-6 |
+
+召回结果按时间正序以【历史对话记录】块注入 system prompt，LLM 可引用原文回答。响应的 `memory.episodic` 调试块透出本轮召回了哪些消息。
+
+### 5.1.2 知识库语义检索（`services/knowledge.py` + Milvus，2026-11-10 新增）
+
+- **入库**：`POST /api/v1/kb/upload`（纯文本）或 `/upload-file`（.txt/.md 文件）→ 按段落聚合分块（~500 字符，重叠 50）→ fastembed 本地模型 `BAAI/bge-small-zh-v1.5`（ONNX，512 维）向量化 → 写 Milvus 集合 `kb_chunks`（user_id/doc_name/chunk_index/content/embedding，AUTOINDEX+COSINE）
+- **检索**：每轮对话组装上下文时，用当前问题做向量检索（Top-4，按 user_id 过滤），命中注入【知识库片段】块；计算在线程池执行避免阻塞事件循环
+- **优雅降级**：Milvus 不可达时检索返回空列表、入库返回 `stored=0 + error`，主对话链路完全不受影响；`GET /api/v1/kb/status` 查看状态，服务器重启 Milvus 后 `POST /api/v1/kb/reconnect` 重连
+- **注意**：`MILVUS_URI` 必须带 `http://` 前缀——pymilvus 会读取同名环境变量作为模块级默认连接串，无前缀会导致 import 崩溃；国内网络首次下载 embedding 模型需在 `.env` 配 `HF_ENDPOINT=https://hf-mirror.com`（模型已缓存后可留）
+
 ### 5.2 System prompt 结构
 
 ```
@@ -146,10 +172,15 @@ score = 0.1（基线，冷启动保底）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/chat` | 对话入口。请求 `{user_id, message}`；响应含 `memory` 调试块（注入事实+分数、变更列表） |
+| POST | `/api/v1/chat` | 对话入口。请求 `{user_id, message}`；响应含 `memory` 调试块（注入事实+分数、情景召回、知识库命中、变更列表） |
 | GET | `/api/v1/memory/facts?user_id=&include_superseded=` | 查看 L2 事实（含 superseded 谱系） |
 | DELETE | `/api/v1/memory/facts/{id}` | 单条遗忘（硬删除，仅用户明确指定时） |
 | GET | `/api/v1/memory/profile/{user_id}` | 查看 L3 画像 |
+| POST | `/api/v1/kb/upload` | 知识库纯文本入库 `{user_id, doc_name, text}` |
+| POST | `/api/v1/kb/upload-file` | 知识库文件入库（multipart，.txt/.md） |
+| GET | `/api/v1/kb/search?user_id=&q=` | 知识库语义检索 |
+| GET | `/api/v1/kb/status` | 知识库健康状态（Milvus 连通性/分块数） |
+| POST | `/api/v1/kb/reconnect` | 手动重试 Milvus 连接 |
 | GET | `/health` | 健康检查（含 DB 连通性） |
 | GET | `/` | 测试页面（`app/static/index.html`） |
 
@@ -164,6 +195,11 @@ score = 0.1（基线，冷启动保底）
 | `LLM_MODEL` | `deepseek-flash` | （备选 `deepseek-v4-pro`） |
 | `RECENT_MESSAGE_LIMIT` | 10 | L0 工作集大小 |
 | `MAX_FACTS_INJECTED` | 8 | 每轮注入 L2 事实上限 |
+| `MILVUS_URI` | `http://43.143.233.242:19530` | Milvus 地址，**必须带 http:// 前缀**（pymilvus 读同名环境变量），不可达时自动降级 |
+| `EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | fastembed 本地 embedding 模型（ONNX，512 维，中文优化） |
+| `KB_CHUNK_SIZE / OVERLAP` | 500 / 50 | 知识库分块参数 |
+| `KB_TOP_K` | 4 | 每轮注入知识库片段上限 |
+| `HF_ENDPOINT` | `https://hf-mirror.com` | HuggingFace 国内镜像（首次下载模型用） |
 
 ⚠️ `.env` 含数据库密码与 API Key，**禁止提交版本控制**（模板见 `.env.example`）。
 
@@ -172,7 +208,7 @@ score = 0.1（基线，冷启动保底）
 当前 demo 有意保留了这些简化，升级时按优先级处理：
 
 1. **抽取管线同步执行**：事实抽取阻塞对话响应（实测 +1~3s）。生产应改为消息队列异步消费（写入返回即结束，抽取后台完成）。
-2. **无 embedding 语义召回**：检索是字符级评分，模糊指代召回失效。生产应加向量检索（Qdrant）做混合召回 + 重排。
+2. **记忆事实检索仍是字符级评分**：知识库已接入 Milvus 向量召回（§5.1.2），但 L2 `memory_facts` 的检索还没有 embedding 语义召回，模糊指代（"我们之前讨论的那个架构问题"）对事实层召回失效。生产应将事实也向量化，与 Milvus 混合召回 + 重排。
 3. **硬删除**：DELETE 接口直接删行，无审计。生产应改为软删除 + 操作审计日志。
 4. **无记忆评测**：没有量化记忆管线的 precision/recall。上线前应建回归评测集（LongMemEval 风格 + 自建真实问答）。
 5. **preferences JSON 字段未启用**：L3 画像只写了 display_name；稳定偏好的结构化管理是 L2 facts 的职责，暂无合并机制。

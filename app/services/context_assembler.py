@@ -5,8 +5,15 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.user_profile import UserProfile
-from app.services.memory_query import get_profile, recent_messages, search_facts
+from app.services import knowledge
+from app.services.memory_query import (
+    get_profile,
+    recent_messages,
+    recall_episodic,
+    search_facts,
+)
 
 
 @dataclass
@@ -15,6 +22,8 @@ class ContextBundle:
     profile: UserProfile | None
     facts: list[dict] = field(default_factory=list)
     recent: list[dict] = field(default_factory=list)
+    episodic: list[dict] = field(default_factory=list)
+    kb_hits: list[dict] = field(default_factory=list)
 
 
 def _fmt_dt(dt_str: str | None) -> str:
@@ -27,7 +36,12 @@ def _fmt_dt(dt_str: str | None) -> str:
         return "未知时间"
 
 
-def build_system_prompt(profile: UserProfile | None, facts: list[dict]) -> str:
+def build_system_prompt(
+    profile: UserProfile | None,
+    facts: list[dict],
+    episodic: list[dict] | None = None,
+    kb_hits: list[dict] | None = None,
+) -> str:
     lines = [
         "你是用户的长期个人助手。以下是关于用户的持久记忆（跨对话有效）。",
         "",
@@ -45,10 +59,24 @@ def build_system_prompt(profile: UserProfile | None, facts: list[dict]) -> str:
     else:
         lines.append("- （暂无记忆）")
     lines.append("")
+
+    if episodic:
+        lines.append("【历史对话记录】（从完整对话日志中召回的原始消息，按时间正序，可引用原文回答）")
+        for m in episodic:
+            lines.append(f"- {_fmt_dt(m['created_at'])} {m['role']}：{m['content'][:200]}")
+        lines.append("")
+
+    if kb_hits:
+        lines.append("【知识库片段】（从用户上传的个人文件中语义检索得到）")
+        for h in kb_hits:
+            lines.append(f"- （{h['doc_name']} #{h['chunk_index']}，相关度 {h['score']}）{h['content'][:300]}")
+        lines.append("")
+
     lines.append("【使用规则】")
     lines.append("1. 回答时优先使用上述记忆，无需用户重复自我介绍。")
     lines.append("2. 若记忆与用户当前消息冲突，以当前消息为准，并在回复末尾提示记忆已更新。")
     lines.append("3. 记忆中找不到的信息如实说明，不要编造。")
+    lines.append("4. 若【历史对话记录】中有与问题相关的内容，直接引用原文回答。")
     return "\n".join(lines)
 
 
@@ -56,14 +84,23 @@ async def assemble_context(session: AsyncSession, user_id: str, query: str) -> C
     profile = await get_profile(session, user_id)
     facts = await search_facts(session, user_id, query)
     recent = await recent_messages(session, user_id)
+    episodic = await recall_episodic(session, user_id, query)
+    # 知识库语义检索 (Milvus 不可达时内部降级为空列表; embedding 计算较重, 用线程池避免阻塞事件循环)
+    kb_hits: list[dict] = []
+    if settings.MILVUS_URI and settings.MILVUS_URI.startswith("http"):
+        import anyio
+
+        kb_hits = await anyio.to_thread.run_sync(knowledge.search, user_id, query)
 
     recent_dicts = [
         {"role": m.role, "content": m.content, "id": m.id, "created_at": m.created_at.isoformat()}
         for m in recent
     ]
     return ContextBundle(
-        system_prompt=build_system_prompt(profile, facts),
+        system_prompt=build_system_prompt(profile, facts, episodic, kb_hits),
         profile=profile,
         facts=facts,
         recent=recent_dicts,
+        episodic=episodic,
+        kb_hits=kb_hits,
     )

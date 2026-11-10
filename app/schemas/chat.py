@@ -24,9 +24,26 @@ class FactInjected(BaseModel):
     updated_at: str | None = None
 
 
+class EpisodicMsg(BaseModel):
+    role: str
+    content: str
+    created_at: str | None = None
+
+
+class KbHit(BaseModel):
+    doc_name: str
+    chunk_index: int
+    content: str
+    score: float
+
+
 class MemoryDebug(BaseModel):
     facts_injected: list[FactInjected]
     recent_messages_used: int
+    episodic_used: int = 0
+    episodic: list[EpisodicMsg] = []
+    kb_used: int = 0
+    kb: list[KbHit] = []
     display_name: str | None = None
     changes: list[MemoryChange]
 

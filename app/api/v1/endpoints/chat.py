@@ -10,6 +10,7 @@ from app.llm.llm_client import LLMClient
 from app.schemas.chat import (
     ChatRequest,
     ChatResponse,
+    EpisodicMsg,
     FactInjected,
     MemoryDebug,
     MemoryChange,
@@ -62,6 +63,21 @@ async def chat(
                 for f in bundle.facts
             ],
             recent_messages_used=len(bundle.recent),
+            episodic_used=len(bundle.episodic),
+            episodic=[
+                EpisodicMsg(role=m["role"], content=m["content"], created_at=m.get("created_at"))
+                for m in bundle.episodic
+            ],
+            kb_used=len(bundle.kb_hits),
+            kb=[
+                KbHit(
+                    doc_name=h["doc_name"],
+                    chunk_index=h["chunk_index"],
+                    content=h["content"],
+                    score=h["score"],
+                )
+                for h in bundle.kb_hits
+            ],
             display_name=bundle.profile.display_name if bundle.profile else None,
             changes=[MemoryChange(**c) for c in changes],
         ),

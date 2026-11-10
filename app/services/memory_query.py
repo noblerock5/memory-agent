@@ -1,6 +1,7 @@
-"""记忆检索 (读路径): 画像 / 事实混合评分 / 近期对话"""
+"""记忆检索 (读路径): 画像 / 事实混合评分 / 近期对话 / 情景记忆时间召回"""
 
 import math
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -104,6 +105,91 @@ async def recent_messages(
         .limit(limit)
     )
     return list(reversed(res.scalars().all()))
+
+
+# ---- 情景记忆时间召回: 修复"结构化事实检索覆盖不到原始消息历史"的盲区 ----
+# 时间意图正则: 问"第一次/最早"类问题需要按时间正序取原始消息, 而非按相关性评分
+# (相关性评分带时间衰减, 越旧的越靠后, 与"第一次"的意图正好相反)
+_FIRST_RE = re.compile(r"第一次|第1次|最早|最开始|头一回|初次|开天辟地")
+_PAST_RE = re.compile(r"上次|之前|以前|历史|问过|聊过|说过|谈过|讨论过|记录")
+
+
+def detect_temporal_intent(query: str) -> str | None:
+    """检测时间意图: 'first'=问最早的, 'past'=问之前聊过的, None=非时间类问题."""
+    if _FIRST_RE.search(query):
+        return "first"
+    if _PAST_RE.search(query):
+        return "past"
+    return None
+
+
+async def recall_first_messages(
+    session: AsyncSession, user_id: str, limit: int = 4
+) -> list[dict]:
+    """时间正序取最早的若干条用户消息 (情景记忆的'锚点'召回)."""
+    res = await session.execute(
+        select(ChatMessage)
+        .where(ChatMessage.user_id == user_id, ChatMessage.role == "user")
+        .order_by(ChatMessage.id.asc())
+        .limit(limit)
+    )
+    return [
+        {
+            "role": m.role,
+            "content": m.content,
+            "id": m.id,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in res.scalars().all()
+    ]
+
+
+async def search_all_messages(
+    session: AsyncSession, user_id: str, query: str, limit: int = 6
+) -> list[dict]:
+    """全量原始消息检索 (大表应换向量库, 演示规模直接全扫+bigram评分)."""
+    res = await session.execute(
+        select(ChatMessage)
+        .where(ChatMessage.user_id == user_id)
+        .order_by(ChatMessage.id.desc())
+        .limit(2000)  # 演示保护: 最多回扫 2000 条
+    )
+    msgs = res.scalars().all()
+
+    q_tokens = _bigrams(query)
+    scored = []
+    for m in msgs:
+        m_tokens = _bigrams(m.content)
+        overlap = (
+            len(q_tokens & m_tokens) / max(1, math.sqrt(len(q_tokens)))
+            if q_tokens
+            else 0.0
+        )
+        if overlap <= 0:
+            continue
+        scored.append(
+            {
+                "role": m.role,
+                "content": m.content,
+                "id": m.id,
+                "created_at": m.created_at.isoformat(),
+                "score": round(overlap, 3),
+            }
+        )
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[:limit]
+
+
+async def recall_episodic(session: AsyncSession, user_id: str, query: str) -> list[dict]:
+    """情景记忆召回入口: 按时间意图路由到对应策略, 返回按时间正序的原始消息."""
+    intent = detect_temporal_intent(query)
+    if intent == "first":
+        hits = await recall_first_messages(session, user_id)
+        return sorted(hits, key=lambda x: x["id"])
+    if intent == "past":
+        hits = await search_all_messages(session, user_id, query)
+        return sorted(hits, key=lambda x: x["id"])
+    return []
 
 
 async def list_facts(
