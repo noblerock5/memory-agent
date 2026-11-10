@@ -178,6 +178,22 @@ def search(user_id: str, query: str, top_k: int | None = None) -> list[dict]:
         return []
 
 
+def count_chunks(user_id: str) -> int | None:
+    """统计某用户的知识库分块数; Milvus 不可达时返回 None."""
+    client = _get_milvus()
+    if client is None:
+        return None
+    try:
+        safe_uid = user_id.replace("\\", "\\\\").replace('"', '\\"')
+        res = client.query(
+            COLLECTION, filter=f'user_id == "{safe_uid}"', output_fields=["count(*)"]
+        )
+        return int(res[0].get("count(*)", 0))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("统计知识库分块数失败 (%s): %s", user_id, e)
+        return None
+
+
 def status() -> dict:
     """知识库健康状态 (供 /health 与前端面板展示)."""
     s = {

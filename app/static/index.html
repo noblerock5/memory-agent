@@ -55,6 +55,11 @@
   .fact-item .v { line-height: 1.4; }
   .fact-item.superseded { opacity: 0.55; background: var(--gray-bg); }
   .fact-item.superseded .v { text-decoration: line-through; }
+  .user-row { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; cursor: pointer; }
+  .user-row:hover { background: var(--gray-bg); }
+  .user-row.me { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, transparent); }
+  .user-row .k { margin-bottom: 2px; }
+  .user-row .v { color: var(--muted); font-size: 11px; }
   .badge { float: right; font-size: 10px; padding: 1px 7px; border-radius: 8px; }
   .badge.active { background: var(--green-bg); color: var(--green); }
   .badge.superseded { background: var(--gray-bg); color: var(--muted); }
@@ -98,7 +103,9 @@
   </div>
 
   <div class="side">
-    <h2>长期记忆（L2 事实）<button onclick="loadMemory()">刷新</button></h2>
+    <h2>用户列表 <button onclick="loadUsers()">刷新</button></h2>
+    <div id="userList" class="loading">加载中…</div>
+    <h2 style="margin-top:14px">长期记忆（L2 事实）<button onclick="loadMemory()">刷新</button></h2>
     <div class="profile-card" id="profileCard">画像加载中…</div>
     <div id="factList" class="loading">加载中…</div>
     <p style="font-size:11px;color:var(--muted);margin-top:10px">
@@ -114,6 +121,30 @@ const KEY_LABEL = {
   'preference.like': '偏好', 'preference.style': '回复风格'
 };
 let currentUser = null;
+
+async function loadUsers() {
+  const box = $('userList');
+  try {
+    const resp = await fetch('/api/v1/memory/users');
+    const d = await resp.json();
+    if (!d.items || !d.items.length) {
+      box.innerHTML = '<div class="empty">还没有用户，先发一条消息</div>';
+      return;
+    }
+    box.innerHTML = d.items.map(u => `
+      <div class="user-row ${u.user_id === $('userId').value.trim() ? 'me' : ''}" onclick="pickUser('${esc(u.user_id)}')">
+        <div class="k"><b>${esc(u.user_id)}</b>${u.display_name ? '（' + esc(u.display_name) + '）' : ''}${u.user_id === $('userId').value.trim() ? ' ← 当前' : ''}</div>
+        <div class="v">消息 ${u.messages} · 记忆 ${u.facts} · 知识库 ${u.kb_chunks === null ? 'N/A' : u.kb_chunks + ' 块'}</div>
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+function pickUser(uid) {
+  $('userId').value = uid;
+  switchUser();
+}
 
 function fill(text) { $('input').value = text; $('input').focus(); }
 
@@ -175,6 +206,7 @@ async function send() {
     waiting.classList.remove('loading');
     renderDebug(d.memory);
     loadMemory();
+    loadUsers();
   } catch (e) {
     waiting.textContent = '请求失败：' + e.message + '（检查后端是否运行）';
     waiting.classList.add('error');
@@ -224,6 +256,7 @@ fetch('/health').then(r => r.json()).then(h => {
 }).catch(() => { $('llmMode').textContent = '后端离线'; });
 
 loadMemory();
+loadUsers();
 </script>
 </body>
 </html>

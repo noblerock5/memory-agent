@@ -50,10 +50,20 @@ async def health():
     return {"status": "ok", "db": db_ok, "version": settings.APP_VERSION}
 
 
-# 静态测试页面 (已注册的 /api/* 与 /health 路由优先于 mount)
+# 静态测试页面 (已注册的 /api/*、/health 与 "/" 路由优先于 mount)
 from fastapi.staticfiles import StaticFiles  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
 import os  # noqa: E402
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static_dir):
+
+    # 首页禁用缓存, 保证页面更新立即生效 (必须在 mount 之前注册)
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(
+            os.path.join(_static_dir, "index.html"),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
     app.mount("/", StaticFiles(directory=_static_dir, html=True), name="static")

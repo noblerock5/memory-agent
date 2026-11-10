@@ -1,15 +1,18 @@
-"""记忆管理端点: 查看 / 遗忘 (透明可审计)"""
+"""记忆管理端点: 查看 / 遗忘 / 用户列表 (透明可审计)"""
 
 from datetime import timezone
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_db
+from app.models.chat_message import ChatMessage
 from app.models.memory_fact import MemoryFact
 from app.models.user_profile import UserProfile
 from app.schemas.chat import DeleteResponse, FactListResponse, FactOut, ProfileOut
+from app.services import knowledge
 from app.services.memory_query import list_facts
 
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -65,3 +68,38 @@ async def get_profile(user_id: str, db: AsyncSession = Depends(get_db)) -> Profi
         display_name=profile.display_name,
         updated_at=_iso(profile.updated_at),
     )
+
+
+@router.get("/users")
+async def list_users(db: AsyncSession = Depends(get_db)) -> dict:
+    """全部用户概览: 消息数 / 事实数 / 知识库分块数 / 称呼 (免查数据库)."""
+    msg_rows = (
+        await db.execute(
+            select(ChatMessage.user_id, func.count(ChatMessage.id))
+            .group_by(ChatMessage.user_id)
+        )
+    ).all()
+    fact_rows = (
+        await db.execute(
+            select(MemoryFact.user_id, func.count(MemoryFact.id))
+            .where(MemoryFact.status == "active")
+            .group_by(MemoryFact.user_id)
+        )
+    ).all()
+    profiles = {
+        p.user_id: p.display_name for p in (await db.execute(select(UserProfile))).scalars()
+    }
+
+    items: dict[str, dict] = {}
+    for uid, cnt in msg_rows:
+        items[uid] = {"user_id": uid, "messages": cnt, "facts": 0, "kb_chunks": None}
+    for uid, cnt in fact_rows:
+        items.setdefault(uid, {"user_id": uid, "messages": 0, "facts": 0, "kb_chunks": None})
+        items[uid]["facts"] = cnt
+    for uid, item in items.items():
+        item["display_name"] = profiles.get(uid)
+        # Milvus 计数是阻塞 IO, 挪线程池避免卡事件循环
+        item["kb_chunks"] = await anyio.to_thread.run_sync(knowledge.count_chunks, uid)
+
+    result = sorted(items.values(), key=lambda x: x["messages"], reverse=True)
+    return {"count": len(result), "items": result}
