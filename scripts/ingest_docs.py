@@ -60,7 +60,11 @@ EXTRACTORS = {".pdf": extract_pdf, ".docx": extract_docx, ".xlsx": extract_xlsx}
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--user-id", default="kld_user")
+    parser.add_argument(
+        "--user-id",
+        default="global",
+        help="文档归属: global=共享知识库(默认, 所有用户可查); 或填具体 user_id 表示私有文档",
+    )
     parser.add_argument("--dir", default="docs/文档资料")
     args = parser.parse_args()
 

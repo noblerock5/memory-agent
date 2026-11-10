@@ -1,9 +1,10 @@
-"""知识库服务: 个人文件 -> 分块 -> embedding -> Milvus 向量检索
+"""知识库服务: 文档 -> 分块 -> embedding -> Milvus 向量检索
 
 设计要点:
 - 懒加载: embedding 模型和 Milvus 连接在首次使用时才初始化
 - 优雅降级: Milvus 不可达时 search/ingest 返回安全默认值并记日志, 主对话链路不受影响
-- 按用户隔离: 所有检索都带 user_id 过滤 (布尔表达式, 不依赖 partition)
+- 归属双层模型: 共享知识库 owner="global" (企业文档, 所有用户可查);
+  私有文档 owner=<user_id> (仅本人可查)。检索合并召回: global + 本人
 """
 
 import logging
@@ -145,8 +146,15 @@ def ingest_text(user_id: str, doc_name: str, text: str) -> dict:
         return {"chunks": len(chunks), "stored": 0, "error": str(e)}
 
 
+# 共享知识库的归属标识: 企业文档所有人可查; 个人上传文档用各自 user_id
+SHARED_OWNER = "global"
+
+
 def search(user_id: str, query: str, top_k: int | None = None) -> list[dict]:
-    """语义检索用户的知识库; Milvus 不可达时返回空列表 (主链路降级)."""
+    """语义检索: 共享知识库(global) + 该用户私有文档 合并召回.
+
+    Milvus 不可达时返回空列表 (主链路降级).
+    """
     top_k = top_k or settings.KB_TOP_K
     client = _get_milvus()
     if client is None:
@@ -154,12 +162,18 @@ def search(user_id: str, query: str, top_k: int | None = None) -> list[dict]:
     try:
         model = _get_embed_model()
         q_vec = list(map(float, next(model.embed([query]))))
+        safe_uid = user_id.replace("\\", "\\\\").replace('"', '\\"')
+        flt = (
+            f'user_id == "{SHARED_OWNER}" or user_id == "{safe_uid}"'
+            if safe_uid != SHARED_OWNER
+            else f'user_id == "{SHARED_OWNER}"'
+        )
         hits = client.search(
             COLLECTION,
             data=[q_vec],
             limit=top_k,
-            filter=f'user_id == "{user_id}"',
-            output_fields=["doc_name", "chunk_index", "content"],
+            filter=flt,
+            output_fields=["doc_name", "chunk_index", "content", "user_id"],
             search_params={"metric_type": "COSINE"},
         )[0]
         return [
@@ -167,6 +181,7 @@ def search(user_id: str, query: str, top_k: int | None = None) -> list[dict]:
                 "doc_name": h["entity"]["doc_name"],
                 "chunk_index": h["entity"]["chunk_index"],
                 "content": h["entity"]["content"],
+                "owner": h["entity"]["user_id"],
                 "score": round(h["distance"], 3),
             }
             for h in hits
@@ -178,19 +193,19 @@ def search(user_id: str, query: str, top_k: int | None = None) -> list[dict]:
         return []
 
 
-def count_chunks(user_id: str) -> int | None:
-    """统计某用户的知识库分块数; Milvus 不可达时返回 None."""
+def count_chunks(owner: str = SHARED_OWNER) -> int | None:
+    """统计某归属下的知识库分块数 (共享库传 SHARED_OWNER); Milvus 不可达时返回 None."""
     client = _get_milvus()
     if client is None:
         return None
     try:
-        safe_uid = user_id.replace("\\", "\\\\").replace('"', '\\"')
+        safe_uid = owner.replace("\\", "\\\\").replace('"', '\\"')
         res = client.query(
             COLLECTION, filter=f'user_id == "{safe_uid}"', output_fields=["count(*)"]
         )
         return int(res[0].get("count(*)", 0))
     except Exception as e:  # noqa: BLE001
-        logger.warning("统计知识库分块数失败 (%s): %s", user_id, e)
+        logger.warning("统计知识库分块数失败 (%s): %s", owner, e)
         return None
 
 

@@ -95,7 +95,7 @@
       <button onclick="fill('公司2026年国庆节怎么放假？')">8. 知识库：放假安排</button>
       <button onclick="fill('供应商绩效是怎么评估的？')">9. 知识库：供应商绩效</button>
     </div>
-    <div class="empty" style="padding:8px 0">⚠️ 知识库（14 个企业文档/404 块）归属 <b>kld_user</b>。查文档请用 kld_user；测个人记忆可切换其他 user_id（此时知识库检索为空属正常）。</div>
+    <div class="empty" style="padding:8px 0">💡 知识库（14 个企业文档）是<b>共享</b>的，任何 user_id 都能查到；<b>个人记忆</b>（对话历史、事实）按 user_id 隔离，跨对话保留。</div>
     <div class="input-row">
       <textarea id="input" placeholder="输入消息，回车发送（Shift+回车换行）"></textarea>
       <button id="sendBtn" onclick="send()">发送</button>
@@ -127,15 +127,17 @@ async function loadUsers() {
   try {
     const resp = await fetch('/api/v1/memory/users');
     const d = await resp.json();
-    if (!d.items || !d.items.length) {
-      box.innerHTML = '<div class="empty">还没有用户，先发一条消息</div>';
-      return;
+    let html = `<div class="user-row" style="cursor:default"><div class="k"><b>🌐 共享知识库</b></div><div class="v">${d.kb_shared === null ? 'N/A' : d.kb_shared + ' 块'} · 14 个企业文档 · 所有用户可查</div></div>`;
+    if (d.items && d.items.length) {
+      html += d.items.map(u => `
+        <div class="user-row ${u.user_id === $('userId').value.trim() ? 'me' : ''}" onclick="pickUser('${esc(u.user_id)}')">
+          <div class="k"><b>${esc(u.user_id)}</b>${u.display_name ? '（' + esc(u.display_name) + '）' : ''}${u.user_id === $('userId').value.trim() ? ' ← 当前' : ''}</div>
+          <div class="v">消息 ${u.messages} · 个人记忆 ${u.facts} · 私有文档 ${u.kb_chunks === null ? 'N/A' : u.kb_chunks + ' 块'}</div>
+        </div>`).join('');
+    } else {
+      html += '<div class="empty">还没有用户，先发一条消息</div>';
     }
-    box.innerHTML = d.items.map(u => `
-      <div class="user-row ${u.user_id === $('userId').value.trim() ? 'me' : ''}" onclick="pickUser('${esc(u.user_id)}')">
-        <div class="k"><b>${esc(u.user_id)}</b>${u.display_name ? '（' + esc(u.display_name) + '）' : ''}${u.user_id === $('userId').value.trim() ? ' ← 当前' : ''}</div>
-        <div class="v">消息 ${u.messages} · 记忆 ${u.facts} · 知识库 ${u.kb_chunks === null ? 'N/A' : u.kb_chunks + ' 块'}</div>
-      </div>`).join('');
+    box.innerHTML = html;
   } catch (e) {
     box.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
   }

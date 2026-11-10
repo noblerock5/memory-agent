@@ -72,7 +72,7 @@ async def get_profile(user_id: str, db: AsyncSession = Depends(get_db)) -> Profi
 
 @router.get("/users")
 async def list_users(db: AsyncSession = Depends(get_db)) -> dict:
-    """全部用户概览: 消息数 / 事实数 / 知识库分块数 / 称呼 (免查数据库)."""
+    """全部用户概览: 消息数 / 事实数 / 私有知识库分块数 / 称呼 (免查数据库)."""
     msg_rows = (
         await db.execute(
             select(ChatMessage.user_id, func.count(ChatMessage.id))
@@ -102,4 +102,5 @@ async def list_users(db: AsyncSession = Depends(get_db)) -> dict:
         item["kb_chunks"] = await anyio.to_thread.run_sync(knowledge.count_chunks, uid)
 
     result = sorted(items.values(), key=lambda x: x["messages"], reverse=True)
-    return {"count": len(result), "items": result}
+    kb_shared = await anyio.to_thread.run_sync(knowledge.count_chunks, knowledge.SHARED_OWNER)
+    return {"count": len(result), "kb_shared": kb_shared, "items": result}
