@@ -1,5 +1,6 @@
 """上下文组装引擎 (无会话架构的核心): 画像常驻 + 相关事实按需 + 近期对话, 组装系统提示"""
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -15,6 +16,14 @@ from app.services.memory_query import (
     search_facts,
 )
 
+# 盘点类意图: 问知识库里"有什么文件/哪些文档"是聚合问题, 向量检索无法回答,
+# 必须走文件清单层 (knowledge.list_docs) 而不是语义检索 top-k
+_LIST_INTENT_RE = re.compile(
+    r"(有什么|有哪些|都有什么|都有哪些|列出|列举|盘点|统计).{0,4}(文件|文档|资料|知识)"
+    r"|(文件|文档|资料)(列表|清单|都有哪些|有哪些)"
+    r"|知识库(里|中)?(都)?有(什么|哪些)"
+)
+
 
 @dataclass
 class ContextBundle:
@@ -24,6 +33,7 @@ class ContextBundle:
     recent: list[dict] = field(default_factory=list)
     episodic: list[dict] = field(default_factory=list)
     kb_hits: list[dict] = field(default_factory=list)
+    kb_docs: list[dict] = field(default_factory=list)  # 盘点类问题时注入的文件清单
 
 
 def _fmt_dt(dt_str: str | None) -> str:
@@ -41,6 +51,7 @@ def build_system_prompt(
     facts: list[dict],
     episodic: list[dict] | None = None,
     kb_hits: list[dict] | None = None,
+    kb_docs: list[dict] | None = None,
 ) -> str:
     lines = [
         "你是用户的长期个人助手。以下是关于用户的持久记忆（跨对话有效）。",
@@ -86,11 +97,23 @@ def build_system_prompt(
             lines.append(f"- （{h['doc_name']} #{h['chunk_index']}，相关度 {h['score']}）{h['content'][:300]}")
         lines.append("")
 
+    if kb_docs:
+        lines.append(
+            f"【知识库文件清单】（当前知识库共 {len(kb_docs)} 个文档，问\"有什么文件/哪些文档\"时按此如实盘点）"
+        )
+        for d in kb_docs:
+            owner_label = "共享" if d["owner"] == knowledge.SHARED_OWNER else "私有"
+            lines.append(
+                f"- {d['doc_name']}（{owner_label}，{d['chunks']} 块）— {d['preview']}"
+            )
+        lines.append("")
+
     lines.append("【使用规则】")
     lines.append("1. 回答时优先使用上述记忆，无需用户重复自我介绍。")
     lines.append("2. 若记忆与用户当前消息冲突，以当前消息为准，并在回复末尾提示记忆已更新。")
     lines.append("3. 记忆中找不到的信息如实说明，不要编造。")
     lines.append("4. 若【历史对话记录】中有与问题相关的内容，直接引用原文回答。")
+    lines.append("5. 问\"有什么文件/哪些文档\"时，严格按【知识库文件清单】逐个盘点，不要遗漏或编造文件名。")
     return "\n".join(lines)
 
 
@@ -99,22 +122,29 @@ async def assemble_context(session: AsyncSession, user_id: str, query: str) -> C
     facts = await search_facts(session, user_id, query)
     recent = await recent_messages(session, user_id)
     episodic = await recall_episodic(session, user_id, query)
-    # 知识库语义检索 (Milvus 不可达时内部降级为空列表; embedding 计算较重, 用线程池避免阻塞事件循环)
+    # 知识库 (Milvus 不可达时内部降级为空列表; embedding 计算较重, 用线程池避免阻塞事件循环)
     kb_hits: list[dict] = []
+    kb_docs: list[dict] = []
     if settings.MILVUS_URI and settings.MILVUS_URI.startswith("http"):
         import anyio
 
-        kb_hits = await anyio.to_thread.run_sync(knowledge.search, user_id, query)
+        if _LIST_INTENT_RE.search(query):
+            # 盘点类问题: 注入文件清单 (带 TTL 缓存), 不做语义检索——
+            # top-k 片段对"列出所有文件"毫无帮助, 只会误导 LLM
+            kb_docs = await anyio.to_thread.run_sync(knowledge.list_docs, user_id)
+        else:
+            kb_hits = await anyio.to_thread.run_sync(knowledge.search, user_id, query)
 
     recent_dicts = [
         {"role": m.role, "content": m.content, "id": m.id, "created_at": m.created_at.isoformat()}
         for m in recent
     ]
     return ContextBundle(
-        system_prompt=build_system_prompt(profile, facts, episodic, kb_hits),
+        system_prompt=build_system_prompt(profile, facts, episodic, kb_hits, kb_docs),
         profile=profile,
         facts=facts,
         recent=recent_dicts,
         episodic=episodic,
         kb_hits=kb_hits,
+        kb_docs=kb_docs,
     )

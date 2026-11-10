@@ -42,6 +42,17 @@ async def search(user_id: str, q: str, top_k: int | None = None) -> dict:
     return {"count": len(hits), "items": hits}
 
 
+@router.get("/docs")
+async def list_docs(user_id: str) -> dict:
+    """文件清单 (库存盘点): 共享库 + 该用户私有文档, 含分块数与首段预览."""
+    docs = knowledge.list_docs(user_id)
+    return {
+        "count": len(docs),
+        "total_chunks": sum(d["chunks"] for d in docs),
+        "items": docs,
+    }
+
+
 @router.get("/status")
 async def status() -> dict:
     return knowledge.status()

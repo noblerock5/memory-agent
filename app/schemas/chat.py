@@ -37,6 +37,13 @@ class KbHit(BaseModel):
     score: float
 
 
+class KbDocItem(BaseModel):
+    doc_name: str
+    chunks: int
+    owner: str
+    preview: str = ""
+
+
 class MemoryDebug(BaseModel):
     facts_injected: list[FactInjected]
     recent_messages_used: int
@@ -44,6 +51,7 @@ class MemoryDebug(BaseModel):
     episodic: list[EpisodicMsg] = []
     kb_used: int = 0
     kb: list[KbHit] = []
+    kb_docs: list[KbDocItem] = []  # 盘点类问题(有什么文件)时注入的文件清单
     display_name: str | None = None
     changes: list[MemoryChange]
 

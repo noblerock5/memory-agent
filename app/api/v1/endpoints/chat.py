@@ -12,6 +12,7 @@ from app.schemas.chat import (
     ChatResponse,
     EpisodicMsg,
     FactInjected,
+    KbDocItem,
     KbHit,
     MemoryDebug,
     MemoryChange,
@@ -79,6 +80,7 @@ async def chat(
                 )
                 for h in bundle.kb_hits
             ],
+            kb_docs=[KbDocItem(**d) for d in bundle.kb_docs],
             display_name=bundle.profile.display_name if bundle.profile else None,
             changes=[MemoryChange(**c) for c in changes],
         ),

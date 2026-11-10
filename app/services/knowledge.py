@@ -9,6 +9,7 @@
 
 import logging
 import threading
+import time
 
 from app.core.config import settings
 
@@ -22,8 +23,10 @@ _state = {
     "milvus_ok": False,
     "last_error": None,
     "dim": None,
+    "docs_cache": None,       # (timestamp, list_docs 结果) TTL 缓存
 }
 _lock = threading.Lock()
+_DOCS_CACHE_TTL = 60  # 秒; 入库后主动失效
 
 
 def _get_embed_model():
@@ -138,6 +141,7 @@ def ingest_text(user_id: str, doc_name: str, text: str) -> dict:
             for i, c in enumerate(chunks)
         ]
         client.insert(COLLECTION, rows)
+        _state["docs_cache"] = None  # 库存变化, 文件清单缓存失效
         return {"chunks": len(chunks), "stored": len(rows)}
     except Exception as e:  # noqa: BLE001
         _state["milvus_ok"] = False
@@ -190,6 +194,63 @@ def search(user_id: str, query: str, top_k: int | None = None) -> list[dict]:
         _state["milvus_ok"] = False
         _state["last_error"] = str(e)
         logger.warning("知识库检索失败: %s", e)
+        return []
+
+
+def _owner_filter(user_id: str) -> str:
+    """构造 (共享库 OR 本人私有) 的过滤表达式."""
+    safe_uid = user_id.replace("\\", "\\\\").replace('"', '\\"')
+    if safe_uid == SHARED_OWNER:
+        return f'user_id == "{SHARED_OWNER}"'
+    return f'user_id == "{SHARED_OWNER}" or user_id == "{safe_uid}"'
+
+
+def list_docs(user_id: str) -> list[dict]:
+    """知识库文件清单 (库存盘点): 共享库 + 该用户私有文档, 聚合出每个文档的分块数与首段预览.
+
+    这是"现在有什么文件"这类聚合问题的正确读路径——向量检索只会找相关片段,
+    无法枚举库存。结果带 TTL 缓存, 入库时失效。Milvus 不可达时返回空列表。
+    """
+    cached = _state["docs_cache"]
+    if cached and time.time() - cached[0] < _DOCS_CACHE_TTL:
+        return cached[1]
+
+    client = _get_milvus()
+    if client is None:
+        return []
+    try:
+        flt = _owner_filter(user_id)
+        # 一次轻量查询拿全部 (doc_name, chunk_index) 用于聚合
+        rows = client.query(
+            COLLECTION,
+            filter=flt,
+            output_fields=["doc_name", "chunk_index", "user_id"],
+            limit=16384,
+        )
+        # 一次查询拿所有文档的首块做预览
+        first_rows = client.query(
+            COLLECTION,
+            filter=f"{flt} and chunk_index == 0",
+            output_fields=["doc_name", "content"],
+            limit=1000,
+        )
+        previews = {r["doc_name"]: r.get("content", "") for r in first_rows}
+
+        docs: dict[str, dict] = {}
+        for r in rows:
+            name = r["doc_name"]
+            d = docs.setdefault(
+                name, {"doc_name": name, "chunks": 0, "owner": r["user_id"], "preview": ""}
+            )
+            d["chunks"] += 1
+        for name, d in docs.items():
+            d["preview"] = previews.get(name, "")[:80].replace("\n", " ")
+
+        result = sorted(docs.values(), key=lambda d: d["doc_name"])
+        _state["docs_cache"] = (time.time(), result)
+        return result
+    except Exception as e:  # noqa: BLE001
+        logger.warning("获取文件清单失败: %s", e)
         return []
 
 
