@@ -49,6 +49,8 @@ def _get_milvus():
         try:
             from pymilvus import DataType, MilvusClient
 
+            # 建集合需要 dim, 先确保 embedding 模型已加载
+            _get_embed_model()
             client = MilvusClient(uri=settings.MILVUS_URI)
             if not client.has_collection(COLLECTION):
                 schema = client.create_schema(auto_id=True, enable_dynamic_field=False)
