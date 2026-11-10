@@ -68,7 +68,7 @@
   <h1>记忆智能体测试台</h1>
   <span class="tag">无 session · 仅凭 user_id 跨对话记忆</span>
   <div class="uid-box">
-    user_id：<input id="userId" value="demo_user_1">
+    user_id：<input id="userId" value="kld_user">
     <button class="tag" style="cursor:pointer;border:none" onclick="switchUser()">切换</button>
   </div>
   <span class="tag" id="llmMode"></span>
@@ -86,7 +86,11 @@
       <button onclick="fill('我最近在推进证件系统一期，设计文档写到一半')">4. 新事实（多值并存）</button>
       <button onclick="fill('把我之前说的偏好都列出来')">5. 记忆清单</button>
       <button onclick="fill('我叫什么名字？我叫什么名字？我叫什么名字？')">6. 问句防污染测试</button>
+      <button onclick="fill('生产安全事故应急救援预案里面有什么？')">7. 知识库：应急预案</button>
+      <button onclick="fill('公司2026年国庆节怎么放假？')">8. 知识库：放假安排</button>
+      <button onclick="fill('供应商绩效是怎么评估的？')">9. 知识库：供应商绩效</button>
     </div>
+    <div class="empty" style="padding:8px 0">⚠️ 知识库（14 个企业文档/404 块）归属 <b>kld_user</b>。查文档请用 kld_user；测个人记忆可切换其他 user_id（此时知识库检索为空属正常）。</div>
     <div class="input-row">
       <textarea id="input" placeholder="输入消息，回车发送（Shift+回车换行）"></textarea>
       <button id="sendBtn" onclick="send()">发送</button>
