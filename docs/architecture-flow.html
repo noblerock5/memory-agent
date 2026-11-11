@@ -3,106 +3,157 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>memory-agent-api 全链路调用流转 · 动态演示</title>
+<title>memory-agent-api 全链路调用流转 · 动态演示 v2</title>
 <style>
   :root {
-    --bg: #f6f8fa; --panel: #ffffff; --ink: #1e293b; --muted: #64748b;
-    --line: #cbd5e1; --read: #2563eb; --llm: #7c3aed; --write: #059669;
-    --store: #d97706; --user: #475569; --warn: #dc2626;
+    --bg:#f6f8fa; --panel:#fff; --ink:#1e293b; --muted:#64748b; --line:#cbd5e1;
+    --read:#2563eb; --llm:#7c3aed; --write:#059669; --store:#d97706; --user:#475569;
+    --t2m:#0284c7; --muse:#059669; --memgpt:#7c3aed; --kb:#d97706; --self:#475569;
   }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
-  header { padding: 18px 28px 6px; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .sub { color: var(--muted); font-size: 13px; }
-  .controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 28px; align-items: center; }
-  .controls button { border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-      padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all .15s; }
-  .controls button:hover { border-color: var(--read); color: var(--read); }
-  .controls button.on { background: var(--read); border-color: var(--read); color: #fff; }
-  .controls .hint { color: var(--muted); font-size: 12px; margin-left: 4px; }
-  .stage { margin: 0 28px; background: var(--panel); border: 1px solid var(--line);
-           border-radius: 14px; overflow: hidden; }
-  svg { display: block; width: 100%; height: auto; }
-  .node rect { transition: all .25s; }
-  .node.active rect { stroke-width: 3.5 !important; filter: drop-shadow(0 0 5px rgba(245,158,11,.75)); }
-  .node.dim rect { opacity: .45; }
-  .edge { fill: none; stroke: var(--line); stroke-width: 1.8; transition: stroke .2s; }
-  .edge.hot { stroke: #f59e0b; stroke-width: 2.6; }
-  .pkt { opacity: 0; }
-  .narr { padding: 12px 28px 4px; min-height: 52px; }
-  .narr .step { display: inline-block; background: var(--panel); border: 1px solid var(--line);
-      border-left: 4px solid var(--read); border-radius: 8px; padding: 8px 14px; font-size: 13px; }
-  .narr .step b { color: var(--read); }
-  .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 28px 20px; color: var(--muted); font-size: 12px; }
-  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
-  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  header { padding:16px 28px 4px; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; padding:10px 28px; align-items:center; }
+  .controls button { border:1px solid var(--line); background:var(--panel); color:var(--ink);
+      padding:7px 13px; border-radius:8px; cursor:pointer; font-size:13px; transition:all .15s; }
+  .controls button:hover { border-color:var(--read); color:var(--read); }
+  .controls button.on { background:var(--read); border-color:var(--read); color:#fff; }
+  .controls .hint { color:var(--muted); font-size:12px; }
+  .stage { margin:0 28px; background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  svg { display:block; width:100%; height:auto; }
+  .node rect.box { transition:opacity .25s; }
+  .node.active rect.box { animation:pulse 1.15s ease-in-out infinite;
+      filter:drop-shadow(0 0 6px rgba(245,158,11,.8)); }
+  @keyframes pulse { 0%,100%{ stroke-width:3.2px } 50%{ stroke-width:4.6px } }
+  .edge { fill:none; stroke:var(--line); stroke-width:1.8; transition:stroke .2s; }
+  .edge.hot { stroke:#f59e0b; stroke-width:2.6; }
+  .ghost { animation:fadeout .65s forwards; }
+  @keyframes fadeout { to { opacity:0; } }
+  .narr { padding:10px 28px 2px; min-height:48px; }
+  .narr .step { display:inline-block; background:var(--panel); border:1px solid var(--line);
+      border-left:4px solid var(--read); border-radius:8px; padding:7px 14px; font-size:13.5px; }
+  .narr .step b { color:var(--read); }
+  .narr .step .idx { color:var(--muted); font-weight:400; margin-right:8px; }
+  .detail { display:grid; grid-template-columns: 5fr 7fr; gap:14px; padding:10px 28px 4px; }
+  .pane { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 14px; }
+  .pane h3 { margin:0 0 8px; font-size:13.5px; color:var(--muted); font-weight:600; }
+  #stepList { list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto; font-size:12.5px; }
+  #stepList li { padding:5px 8px 5px 26px; border-radius:7px; position:relative; color:var(--muted); }
+  #stepList li.done { color:#94a3b8; }
+  #stepList li.done::before { content:"✓"; position:absolute; left:8px; color:#16a34a; font-weight:700; }
+  #stepList li.cur { background:#eff6ff; color:var(--ink); font-weight:600; }
+  #stepList li.cur::before { content:"▶"; position:absolute; left:8px; color:var(--read); font-size:10px; top:7px; }
+  #dataCard table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  #dataCard th { text-align:left; color:var(--muted); font-weight:600; white-space:nowrap;
+      padding:4px 10px 4px 0; vertical-align:top; width:88px; }
+  #dataCard td { padding:4px 0; vertical-align:top; color:var(--ink); }
+  #dataCard td code, #dataCard td .mono { font:11.5px/1.5 ui-monospace,Menlo,monospace;
+      background:#f1f5f9; padding:1px 5px; border-radius:4px; word-break:break-all; }
+  #dataCard .cardtitle { font-weight:700; font-size:14px; margin-bottom:6px; }
+  .legend { display:flex; flex-wrap:wrap; gap:12px; padding:8px 28px 4px; color:var(--muted); font-size:12px; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:4px; vertical-align:-1px; }
+  details.map { margin:6px 28px 8px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:8px 16px; font-size:12.5px; }
+  details.map summary { cursor:pointer; font-weight:700; color:var(--ink); }
+  details.map table { width:100%; border-collapse:collapse; margin-top:8px; }
+  details.map th { text-align:left; color:var(--muted); padding:4px 10px 4px 0; border-bottom:1px solid var(--line); }
+  details.map td { padding:5px 10px 5px 0; border-bottom:1px dashed #e2e8f0; vertical-align:top; }
+  .tag-memgpt { color:var(--memgpt); font-weight:700; } .tag-t2m { color:var(--t2m); font-weight:700; }
+  .tag-muse { color:var(--muse); font-weight:700; } .tag-kb { color:var(--kb); font-weight:700; }
+  .tag-self { color:var(--self); font-weight:700; }
+  footer { padding:2px 28px 22px; color:var(--muted); font-size:12px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>memory-agent-api · 全链路调用流转（无 session，仅凭 user_id 的动态记忆架构）</h1>
-  <div class="sub">点下面的场景按钮，观看一条消息在系统里的真实路径：读取路径 → System Prompt 组装 → DeepSeek LLM → 写入管线 → 存储层。动画与 <code>docs/memory-architecture.md</code> 一一对应。</div>
+  <h1>memory-agent-api · 全链路调用流转（企业知识库 × 记忆智能体，无 session，仅凭 user_id）</h1>
+  <div class="sub">每个节点标注了「取什么值 / 存什么内容」的字段级细节（下方数据卡片随步骤联动）；节点右上角小标签标注该环节借鉴的记忆框架。动画与 <code>docs/memory-architecture.md</code> 一一对应。</div>
 </header>
 
 <div class="controls" id="btns">
-  <span class="hint">▶ 选择一个问题场景：</span>
+  <span class="hint">▶ 问题场景：</span>
   <button data-sc="A">自我介绍（普通对话）</button>
   <button data-sc="B">“我叫什么名字？”</button>
   <button data-sc="C">“我第一次提问是什么？”</button>
   <button data-sc="D">“现在有什么文件？”</button>
   <button data-sc="E">“国庆节怎么放假？”</button>
-  <button data-sc="W" style="margin-left:12px">仅看：写入管线</button>
+  <button data-sc="W" style="margin-left:10px">▶ 对话→记忆：压缩蒸馏全流程</button>
 </div>
 
 <div class="stage"><svg id="cv" viewBox="0 0 1180 660" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div class="narr"><span class="step" id="narr">点击上方按钮开始演示…</span></div>
 
+<div class="detail">
+  <div class="pane"><h3>执行步骤（实时）</h3><ol id="stepList"></ol></div>
+  <div class="pane"><h3>取值 / 存值详情（跟随当前步骤联动）</h3><div id="dataCard"><span style="color:var(--muted)">等待演示…</span></div></div>
+</div>
+
 <div class="legend">
   <span><i style="background:#f8fafc;border:1.5px solid var(--user)"></i>入口/路由</span>
   <span><i style="background:#eff6ff;border:1.5px solid var(--read)"></i>记忆读取路径</span>
   <span><i style="background:#f5f3ff;border:1.5px solid var(--llm)"></i>LLM</span>
-  <span><i style="background:#ecfdf5;border:1.5px solid var(--write)"></i>写入管线（抽取→冲突消解→画像）</span>
+  <span><i style="background:#ecfdf5;border:1.5px solid var(--write)"></i>写入管线（压缩蒸馏→结构化→冲突消解→画像）</span>
   <span><i style="background:#fffbeb;border:1.5px solid var(--store)"></i>存储层</span>
-  <span><i style="background:#f59e0b;border-radius:50%"></i>= 一次调用中流动的数据包</span>
+  <span>节点右上角小标签 = 借鉴的记忆框架</span>
 </div>
+
+<details class="map" open>
+  <summary>记忆框架借鉴图谱（用了什么框架的哪部分 → 落在哪）</summary>
+  <table>
+    <tr><th>框架 / 思想来源</th><th>借鉴的哪部分</th><th>落点</th></tr>
+    <tr><td class="tag-memgpt">MemGPT / Letta</td><td>三层分级记忆（Core / Recall / Archival）</td>
+        <td>L3 画像 + L0 近期窗口 = Core；L1 日志召回 = Recall；L2 事实库 = Archival</td></tr>
+    <tr><td class="tag-t2m">Text2Mem（ACL 2026）</td><td>记忆算子与事实生命周期（Encode / Update / Supersede / Expire…）</td>
+        <td>“压缩蒸馏·结构化”= Encode；冲突消解三分支 = Update/Supersede；Expire 列入生产化路线 §8</td></tr>
+    <tr><td class="tag-muse">Muse 设计文档</td><td>记账哲学：存档无损、投影有损、新替旧·旧账不烧</td>
+        <td>chat_messages append-only 原文永不覆盖；蒸馏摘要有损可重算；superseded 不物理删除</td></tr>
+    <tr><td class="tag-self">Mem0（仅借鉴思想，未引入依赖）</td><td>逐轮蒸馏管线：抽取→去重→ADD/UPDATE/NOOP</td>
+        <td>“压缩蒸馏”节点同款管线，自研实现（换来溯源与防污染可控）</td></tr>
+    <tr><td class="tag-kb">RAG / 企业知识库</td><td>组织级静态知识的检索增强</td>
+        <td>Milvus kb_chunks（owner=global 全员共享 + 私有），清单层 + 向量层双路由</td></tr>
+  </table>
+</details>
+
 <footer>
-  入库链路（图中未动画演示）：/api/v1/kb/upload → 段落分块(500/50) → fastembed bge-small-zh 本地向量(512维) → Milvus kb_chunks（global 共享 + 私有）。<br>
-  设计原则：RAG 检索负责“找内容片段”，盘点问题走“文件清单层”；知识库全员共享，个人记忆按 user_id 隔离——两个正交维度。
+  入库链路（与记忆写入互不干扰）：/api/v1/kb/upload → 段落分块(500/50) → fastembed bge-small-zh 本地向量(512维) → Milvus。<br>
+  两个正交维度：知识库全员共享（owner=global）；个人记忆按 user_id 隔离。对话原文存档 + 蒸馏出结构化事实，两份都保留。
 </footer>
 
 <script>
 "use strict";
-const Z = {
-  user:  { stroke: "#475569", fill: "#f8fafc" },
-  read:  { stroke: "#2563eb", fill: "#eff6ff" },
-  llm:   { stroke: "#7c3aed", fill: "#f5f3ff" },
-  write: { stroke: "#059669", fill: "#ecfdf5" },
-  store: { stroke: "#d97706", fill: "#fffbeb" },
+var Z = {
+  user:  { stroke:"#475569", fill:"#f8fafc" },
+  read:  { stroke:"#2563eb", fill:"#eff6ff" },
+  llm:   { stroke:"#7c3aed", fill:"#f5f3ff" },
+  write: { stroke:"#059669", fill:"#ecfdf5" },
+  store: { stroke:"#d97706", fill:"#fffbeb" },
 };
+var TAGCOLOR = { memgpt:"#7c3aed", t2m:"#0284c7", muse:"#059669", kb:"#d97706", self:"#475569" };
 
-const NODES = [
+var NODES = [
   { id:"n_user",    x:30,  y:50,  w:150, h:60, z:"user",  l:"用户消息",           s:"浏览器/测试页 · 仅 user_id" },
   { id:"n_chat",    x:30,  y:175, w:150, h:64, z:"user",  l:"FastAPI 端点",       s:"POST /api/v1/chat" },
   { id:"n_intent",  x:30,  y:300, w:150, h:60, z:"user",  l:"意图路由",           s:"时间意图? 盘点意图?" },
-  { id:"n_profile", x:285, y:38,  w:205, h:54, z:"read",  l:"L3 用户画像（常驻）", s:"user_profiles" },
-  { id:"n_facts",   x:285, y:112, w:205, h:54, z:"read",  l:"L2 事实混合评分检索", s:"memory_facts · Top-8" },
-  { id:"n_epi",     x:285, y:186, w:205, h:54, z:"read",  l:"情景时间召回",       s:"chat_messages 全量日志" },
-  { id:"n_kbdocs",  x:285, y:260, w:205, h:54, z:"read",  l:"知识库·文件清单",    s:"list_docs · 60s TTL 缓存" },
-  { id:"n_kbvec",   x:285, y:334, w:205, h:54, z:"read",  l:"知识库·语义检索",    s:"embedding → Milvus Top-4" },
-  { id:"n_recent",  x:285, y:408, w:205, h:54, z:"read",  l:"L0 近期 10 条",      s:"chat_messages 工作集" },
-  { id:"n_asm",     x:565, y:212, w:180, h:76, z:"read",  l:"System Prompt 组装", s:"画像+属性+经验+情景+知识库" },
-  { id:"n_llm",     x:565, y:345, w:180, h:64, z:"llm",   l:"DeepSeek LLM",       s:"OpenAI 兼容 · deepseek-flash" },
-  { id:"n_reply",   x:840, y:48,  w:195, h:52, z:"write", l:"① 回复落盘 L1",      s:"append-only 唯一事实源" },
-  { id:"n_extract", x:840, y:123, w:195, h:56, z:"write", l:"② 事实抽取",         s:"用户属性 + exp.* 经验" },
-  { id:"n_conflict",x:840, y:203, w:195, h:56, z:"write", l:"③ 冲突消解",         s:"印证/新替旧(留谱系)/并存" },
-  { id:"n_profup",  x:840, y:283, w:195, h:52, z:"write", l:"④ 画像更新",         s:"display_name 同步" },
-  { id:"n_pg",      x:285, y:558, w:340, h:64, z:"store", l:"PostgreSQL（腾讯云）", s:"chat_messages · memory_facts · user_profiles" },
-  { id:"n_mv",      x:745, y:558, w:330, h:64, z:"store", l:"Milvus :19530",      s:"kb_chunks：global 共享 + 私有 · 404 块" },
+  { id:"n_profile", x:285, y:38,  w:205, h:54, z:"read",  l:"L3 用户画像（常驻）", s:"user_profiles", tag:["MemGPT·Core","memgpt"] },
+  { id:"n_facts",   x:285, y:112, w:205, h:54, z:"read",  l:"L2 事实混合评分检索", s:"memory_facts · Top-8", tag:["MemGPT·Archival","memgpt"] },
+  { id:"n_epi",     x:285, y:186, w:205, h:54, z:"read",  l:"情景时间召回",       s:"chat_messages 全量日志", tag:["MemGPT·Recall","memgpt"] },
+  { id:"n_kbdocs",  x:285, y:260, w:205, h:54, z:"read",  l:"知识库·文件清单",    s:"list_docs · 60s TTL 缓存", tag:["企业知识库·清单","kb"] },
+  { id:"n_kbvec",   x:285, y:334, w:205, h:54, z:"read",  l:"知识库·语义检索",    s:"embedding → Milvus Top-4", tag:["企业知识库·RAG","kb"] },
+  { id:"n_recent",  x:285, y:408, w:205, h:54, z:"read",  l:"L0 近期 10 条",      s:"chat_messages 工作集", tag:["MemGPT·Core","memgpt"] },
+  { id:"n_asm",     x:565, y:212, w:180, h:76, z:"read",  l:"System Prompt 组装", s:"画像+属性+经验+情景+知识库", tag:["按需组装·自研","self"] },
+  { id:"n_llm",     x:565, y:345, w:180, h:64, z:"llm",   l:"DeepSeek LLM",       s:"OpenAI 兼容 · deepseek-flash", tag:["DeepSeek","self"] },
+  { id:"n_reply",   x:845, y:40,  w:190, h:52, z:"write", l:"① 回复落盘 L1",      s:"append-only 存档", tag:["Muse·存档无损","muse"] },
+  { id:"n_compress",x:845, y:112, w:190, h:56, z:"write", l:"② 压缩蒸馏",         s:"原文≈500字→事实20~80字", tag:["Mem0式·自研","self"] },
+  { id:"n_extract", x:845, y:190, w:190, h:56, z:"write", l:"③ 事实结构化",       s:"key命名空间 · entity", tag:["Text2Mem·Encode","t2m"] },
+  { id:"n_conflict",x:845, y:268, w:190, h:56, z:"write", l:"④ 冲突消解",         s:"印证/新替旧/并存", tag:["Text2Mem·Supersede","t2m"] },
+  { id:"n_profup",  x:845, y:346, w:190, h:52, z:"write", l:"⑤ 画像更新",         s:"display_name 同步", tag:["自研","self"] },
+  { id:"n_pg",      x:285, y:558, w:340, h:64, z:"store", l:"PostgreSQL（腾讯云）", s:"chat_messages · memory_facts · user_profiles", tag:["分层记忆·自研","self"] },
+  { id:"n_mv",      x:745, y:558, w:330, h:64, z:"store", l:"Milvus :19530",      s:"kb_chunks：global 共享+私有 · 404 块", tag:["企业知识库·共享","kb"] },
 ];
 
-const EDGES = [
+var EDGES = [
   { id:"e_u_chat",  a:"n_user",  b:"n_chat",    sa:"b", sb:"t" },
   { id:"e_ci",      a:"n_chat",  b:"n_intent",  sa:"b", sb:"t" },
   { id:"e_ip",      a:"n_intent",b:"n_profile", sa:"r", sb:"l" },
@@ -118,201 +169,275 @@ const EDGES = [
   { id:"e_r_asm",   a:"n_recent",b:"n_asm",     sa:"r", sb:"l" },
   { id:"e_asm_llm", a:"n_asm",   b:"n_llm",     sa:"b", sb:"t" },
   { id:"e_llm_reply",a:"n_llm",  b:"n_reply",   sa:"r", sb:"l" },
-  { id:"e_re_ex",   a:"n_reply", b:"n_extract", sa:"b", sb:"t" },
+  { id:"e_re_c",    a:"n_reply", b:"n_compress",sa:"b", sb:"t" },
+  { id:"e_c_ex",    a:"n_compress",b:"n_extract",sa:"b", sb:"t" },
   { id:"e_ex_co",   a:"n_extract",b:"n_conflict",sa:"b", sb:"t" },
   { id:"e_co_pu",   a:"n_conflict",b:"n_profup",sa:"b", sb:"t" },
   { id:"e_pu_pg",   a:"n_profup",b:"n_pg",      sa:"b", sb:"t" },
 ];
 
-const svg = document.getElementById("cv");
-const NS = "http://www.w3.org/2000/svg";
+/* ---- 字段级数据卡片: 每个节点"取了什么 / 存了什么" ---- */
+var CARDS = {
+  n_user: { title:"输入：仅两个字母段", rows:[
+    ["请求体", "<code>{ user_id: 'demo_user_1', message: '我叫李明，负责AI项目部' }</code>"],
+    ["没有的", "<span class='mono'>session_id / conversation_id —— 根本不存在这个字段</span>"]]},
+  n_profile: { title:"取值：L3 画像（每轮无条件注入）", rows:[
+    ["SQL", "<code>SELECT display_name FROM user_profiles WHERE user_id='demo_user_1'</code>"],
+    ["返回", "<code>'李明'</code>（仅几个 token，常驻 system prompt 开头）"],
+    ["为何快", "称呼是 identity.name 写入时同步的缓存视图，不用查 facts 表"]]},
+  n_facts: { title:"取值：L2 事实混合评分检索 Top-8", rows:[
+    ["评分式", "<code>score = 0.1基线 + confidence×0.3 + 时间衰减 + bigram重叠×1.5 + 别名命中1.2</code>"],
+    ["召回示例", "<code>identity.name=李明 (conf 0.95)</code> · <code>exp.solution.TSV导入超时=20并发+分批提交 (conf 0.85)</code>"],
+    ["过滤", "只取 status=active；superseded 旧账不参与"]]},
+  n_epi: { title:"取值：情景记忆时间召回（全量日志）", rows:[
+    ["first", "“第一次/最早”→ 全量 chat_messages 按时间正序取最早 4 条"],
+    ["past", "“上次/之前聊过”→ 全量 bigram 检索 Top-6（≤2000条保护）"],
+    ["返回示例", "<code>[2026-11-09 09:12] user: 我叫李明，在克雷登工业负责AI项目部…</code>（原文）"]]},
+  n_kbdocs: { title:"取值：知识库文件清单（盘点专用）", rows:[
+    ["聚合输出", "<code>{doc_name:'安全环保部-生产安全事故应急救援预案.pdf', chunks:8, owner:'global', preview:'文件编号AQB-YA-2026-01…'}</code> × 14 个文档"],
+    ["不走向量", "盘点问题要的是“库存”，Top-4 片段毫无用处 → list_docs 聚合 + 60s TTL 缓存"]]},
+  n_kbvec: { title:"取值：知识库向量语义检索 Top-4", rows:[
+    ["查询向量", "问题文本 → fastembed bge-small-zh 本地 ONNX → float[512]"],
+    ["过滤式", "<code>owner=='global' or owner==user_id</code>（共享+本人私有）"],
+    ["返回示例", "<code>{doc_name:'行政部-国庆节放假通知.pdf', chunk_index:2, content:'…调休安排…', score:0.768}</code>"]]},
+  n_recent: { title:"取值：L0 工作集（最近 10 条原文）", rows:[
+    ["SQL", "<code>ORDER BY id DESC LIMIT 10</code> 再反转为时间正序"],
+    ["返回", "上一轮的问答原文（role + content），是 LLM 的短期上下文"]]},
+  n_asm: { title:"产物：system prompt（约 1~3k tokens）", rows:[
+    ["块结构", "【用户画像】→【长期记忆·用户属性】→【长期记忆·经验结论】→【历史对话记录】→【知识库片段 或 文件清单】→【使用规则×5】"],
+    ["来源", "画像=L3常驻 · 属性/经验=L2检索 · 情景=时间召回 · 知识库=Milvus（盘点时二选一）"]]},
+  n_llm: { title:"调用：DeepSeek（OpenAI 兼容协议）", rows:[
+    ["输入", "messages = [system_prompt] + 最近10条 + 当前用户消息"],
+    ["输出", "回复文本（读取路径到此为止，写入管线随后启动）"]]},
+  n_reply: { title:"存值：L1 事件日志（append-only）", rows:[
+    ["INSERT", "<code>INSERT INTO chat_messages(user_id, role='assistant', content='回复原文', created_at=now)</code>"],
+    ["原则", "原文永不覆盖、永不删改 —— 摘要只是有损投影，写偏了能捞回原文（Muse·存档无损）"]]},
+  n_compress: { title:"存值：压缩蒸馏（对话 → 事实，≈10:1）", rows:[
+    ["输入", "本轮 user + assistant 原文（约 200~2000 字）"],
+    ["输出", "<b>0~5 条</b> JSON 事实，每条 20~80 字，value 必须自包含（“问题→结论”）"],
+    ["纪律", "抽不出就丢（宁严勿滥）；疑问句 / 含疑问代词的值直接过滤——“我叫什么名字？”曾抽出垃圾值覆盖正确记忆"],
+    ["示例", "原文“我们TSV导入总超时，改20并发分批提交就稳了” → <code>exp.solution.TSV导入超时 = 20并发+分批提交后稳定 (conf 0.85)</code>"]]},
+  n_extract: { title:"存值：事实结构化（key 命名空间）", rows:[
+    ["用户属性", "<code>identity.name</code> · <code>work.current_focus</code> · <code>preference.*</code> · <code>goal.*</code>（entity=user）"],
+    ["经验结论", "<code>exp.solution.*</code> · <code>exp.decision.*</code> · <code>exp.lesson.*</code> · <code>exp.finding.*</code>（entity=exp）"],
+    ["每条记录", "key + value + confidence + source_message_id（溯源到哪句话）+ valid_from/to 生命周期"]]},
+  n_conflict: { title:"存值：冲突消解三分支", rows:[
+    ["同key同value", "reinforced：置信度 +0.05（上限1.0），刷新 last_confirmed_at"],
+    ["单值前缀", "<code>identity.* / work.*</code> 新替旧：旧记录 status→superseded、写 valid_to，<b>不物理删除</b>（谱系可查）"],
+    ["其余", "多值事实并存新增"]]},
+  n_profup: { title:"存值：L3 画像同步", rows:[
+    ["触发条件", "仅当 <code>identity.name</code> 发生变更"],
+    ["SQL", "<code>UPDATE user_profiles SET display_name='老李' WHERE user_id='demo_user_1'</code>"]]},
+  n_pg: { title:"PostgreSQL（腾讯云 43.143.233.242 · 库 memory_agent）", rows:[
+    ["chat_messages", "id · user_id · role · content原文 · created_at —— L0/L1 共用，append-only"],
+    ["memory_facts", "user_id · entity(user/exp) · key · value · confidence · status(active/superseded) · source_message_id · valid_from/to"],
+    ["user_profiles", "user_id · display_name —— L3 称呼缓存"],
+    ["隔离", "三张表全部按 user_id 隔离：李明的记忆，王小舟看不到"]]},
+  n_mv: { title:"Milvus v2.4.4 · 集合 kb_chunks（企业知识库）", rows:[
+    ["字段", "owner(global/私有user_id) · doc_name · chunk_index · content(≤8192字) · embedding float[512]"],
+    ["现状", "14 个企业文档 · 404 块 · owner=global —— <b>任何用户都能查</b>"],
+    ["与记忆正交", "知识库=组织共享资产；个人记忆=用户私有 —— 互不干扰"]]},
+};
 
+var svg = document.getElementById("cv"), NS = "http://www.w3.org/2000/svg";
+function el(name, attrs, parent) {
+  var e = document.createElementNS(NS, name);
+  for (var k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e); return e;
+}
 function anchor(n, side) {
-  switch (side) {
-    case "l": return { x: n.x,          y: n.y + n.h / 2 };
-    case "r": return { x: n.x + n.w,    y: n.y + n.h / 2 };
-    case "t": return { x: n.x + n.w / 2, y: n.y };
-    case "b": return { x: n.x + n.w / 2, y: n.y + n.h };
-  }
+  return side==="l" ? {x:n.x, y:n.y+n.h/2} : side==="r" ? {x:n.x+n.w, y:n.y+n.h/2}
+       : side==="t" ? {x:n.x+n.w/2, y:n.y} : {x:n.x+n.w/2, y:n.y+n.h};
 }
 function edgePath(a, b, sa, sb) {
-  const A = anchor(a, sa), B = anchor(b, sb);
-  if (sa === "l" || sa === "r") {
-    const dx = Math.max(40, Math.abs(B.x - A.x) * 0.55), s = sa === "r" ? 1 : -1;
-    return `M${A.x},${A.y} C${A.x + s * dx},${A.y} ${B.x - s * dx},${B.y} ${B.x},${B.y}`;
+  var A = anchor(a, sa), B = anchor(b, sb);
+  if (sa==="l" || sa==="r") {
+    var dx = Math.max(40, Math.abs(B.x-A.x)*0.55), s = sa==="r"?1:-1;
+    return "M"+A.x+","+A.y+" C"+(A.x+s*dx)+","+A.y+" "+(B.x-s*dx)+","+B.y+" "+B.x+","+B.y;
   }
-  const dy = Math.max(30, Math.abs(B.y - A.y) * 0.55), s = sa === "b" ? 1 : -1;
-  return `M${A.x},${A.y} C${A.x},${A.y + s * dy} ${B.x},${B.y - s * dy} ${B.x},${B.y}`;
+  var dy = Math.max(30, Math.abs(B.y-A.y)*0.55), s2 = sa==="b"?1:-1;
+  return "M"+A.x+","+A.y+" C"+A.x+","+(A.y+s2*dy)+" "+B.x+","+(B.y-s2*dy)+" "+B.x+","+B.y;
 }
 
-// ---- 渲染 ----
-const gEdges = document.createElementNS(NS, "g"); svg.appendChild(gEdges);
-const gNodes = document.createElementNS(NS, "g"); svg.appendChild(gNodes);
-const gPkts  = document.createElementNS(NS, "g"); svg.appendChild(gPkts);
-
-const edgeEls = {}, nodeEls = {};
-for (const e of EDGES) {
-  const p = document.createElementNS(NS, "path");
-  p.setAttribute("d", edgePath(NODES.find(n => n.id === e.a), NODES.find(n => n.id === e.b), e.sa, e.sb));
-  p.setAttribute("class", "edge"); p.setAttribute("id", e.id);
-  gEdges.appendChild(p); edgeEls[e.id] = p;
-}
-for (const n of NODES) {
-  const g = document.createElementNS(NS, "g"); g.setAttribute("class", "node"); g.setAttribute("id", n.id);
-  const c = Z[n.z];
-  const r = document.createElementNS(NS, "rect");
-  r.setAttribute("x", n.x); r.setAttribute("y", n.y); r.setAttribute("width", n.w); r.setAttribute("height", n.h);
-  r.setAttribute("rx", 10); r.setAttribute("fill", c.fill); r.setAttribute("stroke", c.stroke); r.setAttribute("stroke-width", 1.6);
-  const t1 = document.createElementNS(NS, "text");
-  t1.setAttribute("x", n.x + n.w / 2); t1.setAttribute("y", n.y + (n.h === 54 ? 22 : n.h / 2 - 4));
-  t1.setAttribute("text-anchor", "middle"); t1.setAttribute("font-size", 13.5); t1.setAttribute("font-weight", 700);
-  t1.setAttribute("fill", "#1e293b"); t1.textContent = n.l;
-  const t2 = document.createElementNS(NS, "text");
-  t2.setAttribute("x", n.x + n.w / 2); t2.setAttribute("y", n.y + (n.h === 54 ? 40 : n.h / 2 + 15));
-  t2.setAttribute("text-anchor", "middle"); t2.setAttribute("font-size", 11); t2.setAttribute("fill", "#64748b");
+var gEdges = el("g", {}), gNodes = el("g", {}), gTags = el("g", {}), gPkts = el("g", {});
+var edgeEls = {}, nodeEls = {};
+EDGES.forEach(function(e) {
+  var a = NODES.find(function(n){ return n.id===e.a; });
+  var b = NODES.find(function(n){ return n.id===e.b; });
+  edgeEls[e.id] = el("path", {d:edgePath(a,b,e.sa,e.sb), class:"edge", id:e.id}, gEdges);
+});
+NODES.forEach(function(n) {
+  var c = Z[n.z];
+  var g = el("g", {class:"node", id:n.id}, gNodes);
+  el("rect", {x:n.x, y:n.y, width:n.w, height:n.h, rx:10, fill:c.fill, stroke:c.stroke,
+              "stroke-width":1.6, class:"box"}, g);
+  var mid = n.h===54;
+  var t1 = el("text", {x:n.x+n.w/2, y:n.y+(mid?22:n.h/2-4), "text-anchor":"middle",
+              "font-size":13.5, "font-weight":700, fill:"#1e293b"}, g);
+  t1.textContent = n.l;
+  var t2 = el("text", {x:n.x+n.w/2, y:n.y+(mid?40:n.h/2+15), "text-anchor":"middle",
+              "font-size":11, fill:"#64748b"}, g);
   t2.textContent = n.s;
-  g.appendChild(r); g.appendChild(t1); g.appendChild(t2);
-  gNodes.appendChild(g); nodeEls[n.id] = g;
-}
+  nodeEls[n.id] = g;
+  if (n.tag) {
+    var w = n.tag[0].length*6.4+12;
+    el("rect", {x:n.x+n.w-w, y:n.y-17, width:w, height:14, rx:7,
+                fill:"#fff", stroke:TAGCOLOR[n.tag[1]], "stroke-width":1, opacity:.95}, gTags);
+    var tt = el("text", {x:n.x+n.w-w/2, y:n.y-6.5, "text-anchor":"middle",
+                "font-size":9.5, "font-weight":700, fill:TAGCOLOR[n.tag[1]]}, gTags);
+    tt.textContent = n.tag[0];
+  }
+});
 
-// ---- 动画 ----
-function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+/* ---- 动画 ---- */
+var narr = document.getElementById("narr"), stepList = document.getElementById("stepList"),
+    dataCard = document.getElementById("dataCard");
+function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 function animateAlong(edgeId, dur, color) {
-  return new Promise(resolve => {
-    const path = edgeEls[edgeId], len = path.getTotalLength();
+  return new Promise(function(resolve) {
+    var path = edgeEls[edgeId], len = path.getTotalLength();
     path.classList.add("hot");
-    const dot = document.createElementNS(NS, "circle");
-    dot.setAttribute("r", 5.5); dot.setAttribute("fill", color);
-    dot.setAttribute("stroke", "#fff"); dot.setAttribute("stroke-width", 1.5);
-    dot.setAttribute("class", "pkt"); gPkts.appendChild(dot);
-    const t0 = performance.now();
+    var dot = el("circle", {r:6, fill:color, stroke:"#fff", "stroke-width":2, opacity:0}, gPkts);
+    var lastTrail = 0;
+    var t0 = performance.now();
     (function frame(now) {
-      const t = Math.min(1, (now - t0) / dur);
-      const pt = path.getPointAtLength(t * len);
+      var t = Math.min(1, (now-t0)/dur);
+      var pt = path.getPointAtLength(t*len);
       dot.setAttribute("cx", pt.x); dot.setAttribute("cy", pt.y); dot.setAttribute("opacity", 1);
+      if (t*len - lastTrail > 26) {
+        lastTrail = t*len;
+        var gh = el("circle", {cx:pt.x, cy:pt.y, r:4, fill:color, class:"ghost", opacity:.45}, gPkts);
+        setTimeout(function(){ gh.remove(); }, 680);
+      }
       if (t < 1) requestAnimationFrame(frame);
-      else { dot.remove(); setTimeout(() => path.classList.remove("hot"), 350); resolve(); }
+      else { dot.remove(); setTimeout(function(){ path.classList.remove("hot"); }, 350); resolve(); }
     })(t0);
   });
 }
-function highlight(id) { nodeEls[id].classList.add("active"); }
-function clearAll() {
-  Object.values(nodeEls).forEach(g => g.classList.remove("active", "dim"));
-  Object.values(edgeEls).forEach(p => p.classList.remove("hot"));
-  gPkts.innerHTML = "";
+function highlight(id) { nodeEls[id].classList.add("active"); if (CARDS[id]) renderCard(id); }
+function renderCard(id) {
+  var c = CARDS[id];
+  var node = NODES.find(function(n){ return n.id===id; });
+  var html = "<div class='cardtitle' style='color:"+Z[node.z].stroke+"'>"+c.title+"</div><table>";
+  c.rows.forEach(function(r){ html += "<tr><th>"+r[0]+"</th><td>"+r[1]+"</td></tr>"; });
+  dataCard.innerHTML = html + "</table>";
 }
-const narr = document.getElementById("narr");
-function say(html) { narr.innerHTML = html; }
-const ZC = { user:"#475569", read:"#2563eb", llm:"#7c3aed", write:"#059669", store:"#d97706" };
-function nodeZone(id) { return NODES.find(n => n.id === id).z; }
+function clearAll() {
+  Object.keys(nodeEls).forEach(function(k){ nodeEls[k].classList.remove("active"); });
+  Object.keys(edgeEls).forEach(function(k){ edgeEls[k].classList.remove("hot"); });
+  gPkts.innerHTML = ""; stepList.innerHTML = "";
+}
+function say(idx, total, label, text) {
+  narr.innerHTML = "<b>"+label+"</b><span class='idx'>｜ 第 "+idx+"/"+total+" 步</span>｜ "+text;
+}
+var ZC = { user:"#475569", read:"#2563eb", llm:"#7c3aed", write:"#059669", store:"#d97706" };
 
-const INTRO = [
-  { n:"n_user",   t:"用户发出消息 —— <b>只带 user_id，没有任何 session</b>" },
-  { p:"e_u_chat", t:"请求进入对话端点 POST /api/v1/chat" },
-  { n:"n_chat" },
+var INTRO = [
+  { n:"n_user", t:"用户发出消息 —— <b>只带 user_id，没有任何 session 字段</b>" },
+  { p:"e_u_chat" }, { n:"n_chat" },
   { p:"e_ci" },
-  { n:"n_intent", t:"意图路由：是否时间意图（第一次/上次）？是否盘点意图（有什么文件）？" },
+  { n:"n_intent", t:"意图路由：时间意图（第一次/上次）？盘点意图（有什么文件）？" },
 ];
-const OUTRO = [
-  { p:"e_asm_llm", t:"组装好的 system prompt + L0 近期对话 + 当前消息 → 发给 DeepSeek" },
+var OUTRO = [
+  { p:"e_asm_llm", t:"system prompt + L0 近期对话 + 当前消息 → 发给 DeepSeek" },
   { n:"n_llm" },
-  { p:"e_llm_reply", t:"LLM 生成回复（读取路径到此结束，耗时≈读取+生成）" },
+  { p:"e_llm_reply", t:"LLM 生成回复 —— 读取路径结束，进入写入管线" },
   { n:"n_reply" },
-  { p:"e_re_ex" },
-  { n:"n_extract", t:"写入管线启动：LLM 抽取<b>用户属性</b>与 <b>exp.* 经验结论</b>（疑问句防污染）" },
-  { n:"n_extract" },
+  { p:"e_re_c" },
+  { n:"n_compress", t:"② <b>压缩蒸馏</b>：本轮对话原文交给抽取 LLM，蒸馏出 0~5 条结构化事实（≈10:1），抽不出就丢" },
+  { p:"e_c_ex" },
+  { n:"n_extract", t:"③ <b>结构化</b>：key 命名空间（identity/work/preference/goal + exp.*），entity=user|exp，带溯源 ID" },
   { p:"e_ex_co" },
-  { n:"n_conflict", t:"冲突消解：同值印证+0.05 / 单值新替旧（旧账保留谱系）/ 多值并存" },
-  { p:"e_pu_pg" },
-  { n:"n_pg", t:"写回 PostgreSQL：memory_facts 增/改 + 画像同步 —— <b>回复完成时记忆已更新</b>" },
+  { n:"n_conflict", t:"④ <b>冲突消解</b>：同值印证+0.05 / 单值新替旧（旧账留谱系）/ 多值并存" },
+  { p:"e_co_pu" },
   { n:"n_profup" },
+  { p:"e_pu_pg" },
+  { n:"n_pg", t:"⑤ 写回 PostgreSQL —— <b>回复完成时记忆已沉淀</b>，下一轮对话即可命中" },
 ];
-
-const SCEN = {
-  A: { label:"自我介绍（普通对话）", steps: [
-    ...INTRO,
+var SCEN = {
+  A: { label:"自我介绍（普通对话）", steps: [].concat(INTRO, [
     { p:"e_ip" }, { n:"n_profile", t:"L3 画像无条件常驻注入（称呼缓存视图）" },
     { p:"e_p_asm" },
-    { p:"e_if" }, { n:"n_facts", t:"L2 事实混合评分检索：bigram 重叠 + key 别名 + 置信度 + 时间衰减" },
+    { p:"e_if" }, { n:"n_facts", t:"L2 事实混合评分检索：bigram 重叠 + key 别名 + 置信度 + 时间衰减 → Top-8" },
     { p:"e_f_asm" },
     { n:"n_recent" }, { p:"e_r_asm" },
-    { n:"n_asm", t:"组装 system prompt：【用户画像】【用户属性】【经验结论】+ 使用规则" },
-    ...OUTRO,
-  ]},
-  B: { label:"问身份（别名召回）", steps: [
-    ...INTRO,
-    { p:"e_ip" }, { n:"n_profile", t:"“我叫什么”→ 画像缓存直接给出称呼" },
+    { n:"n_asm", t:"组装 system prompt：【画像】【用户属性】【经验结论】+ 使用规则" },
+  ], OUTRO) },
+  B: { label:"问身份（别名召回）", steps: [].concat(INTRO, [
+    { p:"e_ip" }, { n:"n_profile", t:"“我叫什么”→ 画像缓存直接给出称呼“李明”" },
     { p:"e_p_asm" },
-    { p:"e_if" }, { n:"n_facts", t:"查询改写：关键词“名字”→ identity.name 别名命中，+1.2 分稳居 Top-1" },
+    { p:"e_if" }, { n:"n_facts", t:"查询改写：“名字”→ identity.name 别名命中，+1.2 分稳居 Top-1" },
     { p:"e_f_asm" },
     { n:"n_asm", t:"无需用户重复自我介绍 —— 这就是跨对话记忆" },
-    ...OUTRO,
-  ]},
-  C: { label:"问“第一次提问”（时间召回）", steps: [
-    ...INTRO,
-    { p:"e_ie" }, { n:"n_epi", t:"命中时间意图 first：全量 chat_messages 按时间正序取最早 4 条（评分的时间衰减与“第一次”相反，所以必须走独立召回）" },
+  ], OUTRO) },
+  C: { label:"问“第一次提问”（时间召回）", steps: [].concat(INTRO, [
+    { p:"e_ie" }, { n:"n_epi", t:"时间意图 first：全量日志按时间正序取最早 4 条（评分的时间衰减与“第一次”相反，必须走独立召回）" },
     { p:"e_e_asm" },
-    { n:"n_asm", t:"以【历史对话记录】块注入，LLM 可引用原文回答" },
-    ...OUTRO,
-  ]},
-  D: { label:"问“有什么文件？”（清单层）", steps: [
-    ...INTRO,
-    { p:"e_ikd" }, { n:"n_kbdocs", t:"命中<b>盘点意图</b>：跳过向量检索！top-k 片段对“列出全部文件”毫无帮助" },
-    { n:"n_kbdocs" },
+    { n:"n_asm", t:"以【历史对话记录】块注入，LLM 引用原文回答" },
+  ], OUTRO) },
+  D: { label:"问“有什么文件？”（清单层）", steps: [].concat(INTRO, [
+    { p:"e_ikd" }, { n:"n_kbdocs", t:"命中<b>盘点意图</b>：跳过向量检索 —— Top-4 片段对“列出全部文件”毫无帮助" },
     { n:"n_mv", t:"list_docs 聚合 Milvus：14 个文档 / 404 块 / 首段预览（60s TTL 缓存，入库即失效）" },
     { p:"e_kd_asm" },
     { n:"n_asm", t:"【知识库文件清单】整块注入 → LLM 按单如实盘点，不遗漏不编造" },
-    ...OUTRO,
-  ]},
-  E: { label:"问文档内容（RAG 向量召回）", steps: [
-    ...INTRO,
+  ], OUTRO) },
+  E: { label:"问文档内容（RAG 向量召回）", steps: [].concat(INTRO, [
     { p:"e_ikv" }, { n:"n_kbvec", t:"内容问题：问题文本 → bge-small-zh 本地 embedding → Milvus 向量召回 Top-4（global 共享 + 本人私有）" },
     { n:"n_mv" },
     { p:"e_kv_asm" },
-    { n:"n_asm", t:"【知识库片段】注入，要求 LLM 引用时注明文档名、找不到就如实说明" },
-    ...OUTRO,
-  ]},
-  W: { label:"仅看：写入管线", steps: [
-    { n:"n_user", t:"一次对话结束后，看记忆如何沉淀（读路径略）" },
-    { n:"n_reply", t:"① 回复落盘 chat_messages —— append-only，摘要只是有损投影，原文永不覆盖" },
-    { p:"e_re_ex" },
-    { n:"n_extract", t:"② LLM 抽取两类事实：用户属性（identity/work/preference/goal）+ 经验结论（exp.solution/decision/lesson/finding）" },
+    { n:"n_asm", t:"【知识库片段】注入；LLM 引用须注明文档名，找不到就如实说明" },
+  ], OUTRO) },
+  W: { label:"对话→记忆：压缩蒸馏全流程", steps: [
+    { n:"n_user", t:"一次对话结束后，看原文如何变成记忆" },
+    { n:"n_reply", t:"① <b>原文先无条件存档</b>：append-only chat_messages —— 蒸馏有损，原文无损兜底" },
+    { p:"e_re_c" },
+    { n:"n_compress", t:"② <b>压缩蒸馏</b>：原文≈500字 → LLM 抽取 0~5 条事实（每条20~80字，压缩≈10:1）；疑问句/疑问代词值直接过滤" },
+    { p:"e_c_ex" },
+    { n:"n_extract", t:"③ <b>结构化</b>：identity/work/preference/goal + exp.solution/decision/lesson/finding，每条带 source_message_id 溯源" },
     { p:"e_ex_co" },
-    { n:"n_conflict", t:"③ 冲突消解：同 key 同 value → 印证(置信度+0.05)；单值事实新替旧 → 旧的标记 superseded 但<b>不物理删除</b>（谱系可查）" },
+    { n:"n_conflict", t:"④ <b>冲突消解</b>：同值印证 +0.05；单值事实新替旧，旧的保留 superseded 谱系（旧账不烧）" },
     { p:"e_co_pu" },
-    { n:"n_profup", t:"④ identity.name 变更时同步 user_profiles.display_name" },
+    { n:"n_profup" },
     { p:"e_pu_pg" },
-    { n:"n_pg", t:"全部写回 PostgreSQL —— 下一次对话，这些记忆就会出现在读取路径里" },
+    { n:"n_pg", t:"落库示例：<code>identity.name=李明 (0.95)</code> · <code>exp.solution.TSV导入超时=20并发分批提交 (0.85)</code> —— 长期记忆增长是 O(话题数) 而非 O(消息数)" },
+    { n:"n_mv", t:"企业知识库走独立入库链路（/api/v1/kb/upload → 分块 → 向量化 → Milvus），与个人记忆写入互不干扰" },
   ]},
 };
 
-let running = false;
+var running = false;
 async function run(key) {
   if (running) return;
   running = true;
-  document.querySelectorAll("#btns button").forEach(b => b.classList.toggle("on", b.dataset.sc === key));
-  const sc = SCEN[key];
+  document.querySelectorAll("#btns button").forEach(function(b){ b.classList.toggle("on", b.dataset.sc===key); });
+  var sc = SCEN[key], steps = sc.steps, total = steps.length, i = 0;
   clearAll();
-  const color = "#f59e0b";
-  for (const step of sc.steps) {
-    if (step.n) {
-      highlight(step.n);
-      if (step.t) say(`<b>${sc.label}</b> ｜ ${step.t}`);
-      await sleep(560);
+  for (var s of steps) {
+    i++;
+    var li = document.createElement("li");
+    li.className = "cur";
+    li.textContent = (s.t ? s.t.replace(/<[^>]+>/g, "") : "数据流动…");
+    stepList.appendChild(li);
+    if (li.scrollIntoView) li.scrollIntoView({block:"nearest"});
+    if (s.n) {
+      highlight(s.n);
+      say(i, total, sc.label, s.t || "节点激活");
+      await sleep(620);
     } else {
-      const zone = nodeZone(EDGES.find(e => e.id === step.p).a);
-      say(`<b>${sc.label}</b> ｜ ${step.t || "数据流动中…"}`);
-      await animateAlong(step.p, 760, ZC[zone] || color);
+      var e0 = EDGES.find(function(e){ return e.id===s.p; });
+      var zone = NODES.find(function(n){ return n.id===e0.a; }).z;
+      say(i, total, sc.label, s.t || "数据流动中…");
+      await animateAlong(s.p, 760, ZC[zone]);
     }
+    li.className = "done";
   }
-  say(`<b>${sc.label}</b> ｜ ✅ 流转完成 —— 全程无 session：读取按相关性动态组装，写入按 user_id 归属沉淀。`);
+  say(total, total, sc.label, "✅ 流转完成 —— 知识库全员共享（global），个人记忆按 user_id 隔离，两个正交维度。");
   running = false;
 }
-document.getElementById("btns").addEventListener("click", ev => {
-  const key = ev.target.dataset && ev.target.dataset.sc;
+document.getElementById("btns").addEventListener("click", function(ev) {
+  var key = ev.target.dataset && ev.target.dataset.sc;
   if (key) run(key);
 });
-setTimeout(() => run("A"), 700);
+setTimeout(function(){ run("A"); }, 700);
 </script>
 </body>
 </html>
