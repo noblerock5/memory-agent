@@ -2,6 +2,7 @@
 
 > 项目：`memory-agent-api`（无会话记忆智能体 Demo）
 > 本文档描述当前代码的**实际实现**，与源码一一对应，更新代码时请同步更新本文档。
+> 🎬 **全链路动态演示**：浏览器打开 [`architecture-flow.html`](architecture-flow.html)，可交互回放 5 类问题场景的调用流转（读取路径/LLM/写入管线逐跳动画）。
 
 ## 1. 总体设计：为什么没有 session
 
@@ -13,7 +14,7 @@
 
 ## 2. 用的什么记忆框架？
 
-**没有使用第三方框架，是自研轻量实现**（约 600 行核心代码）。此前对比过 Mem0 / Letta(MemGPT) / ReMe / memU / Text2Mem / Zep：
+**没有使用第三方框架，是自研轻量实现**（核心约 700 行，未引入 Mem0 等任何记忆框架依赖）。此前对比过 Mem0 / Letta(MemGPT) / ReMe / memU / Text2Mem / Zep：
 
 - Mem0 等框架解决的是"逐轮事实抽取 + 去重 + 冲突消解"这条写入管线的工程化，但基础版存在硬删除无溯源、评测缺失等短板；
 - 本项目的记忆能力需要完全可控（删除语义、来源追溯、防污染纪律、时间衰减），且 demo 规模下自研成本很低；
@@ -103,8 +104,38 @@ flowchart LR
 
 ## 5. 读路径：每次提问如何组装上下文
 
+### 5.0 全链路调用时序（`POST /api/v1/chat` 一次请求的完整生命周期）
+
+```mermaid
+sequenceDiagram
+    participant U as 前端(测试页)
+    participant E as chat 端点
+    participant CA as context_assembler<br>(组装引擎)
+    participant MQ as memory_query
+    participant MV as Milvus
+    participant L as DeepSeek LLM
+    participant W as memory_writer<br>(写入管线)
+    participant PG as PostgreSQL
+
+    U->>E: {user_id, message} (无 session)
+    E->>CA: assemble_context(user_id, message)
+    CA->>MQ: get_profile / search_facts / recall_episodic / recent_messages
+    MQ->>PG: 画像+事实评分检索+情景时间召回+近期10条
+    CA->>MV: 盘点意图→list_docs清单 / 内容意图→向量Top-4 (线程池)
+    CA-->>E: ContextBundle(system_prompt + 调试数据)
+    E->>PG: 落盘用户消息 (L1 append-only)
+    E->>L: system_prompt + 近期消息 + 当前消息
+    L-->>E: 回复文本
+    E->>PG: 落盘助手回复 (L1)
+    E->>W: extract_and_store(抽取→冲突消解→画像)
+    W->>PG: memory_facts 增/印证/取代 + user_profiles 更新
+    E-->>U: reply + memory 调试块 (注入事实/情景/知识库/变更)
 ```
-用户消息 → ① 查询改写 → ② 混合评分检索 → ②' 情景记忆时间召回 → ②'' 知识库语义检索 → ③ system prompt 组装 → LLM
+
+要点：**读路径先于落盘**（组装上下文时近期对话不含本条消息）；写入管线在回复之后同步执行（生产化改异步，见 §8）。
+
+```
+用户消息 → ① 查询改写 → ② 混合评分检索 → ②' 情景记忆时间召回 → ②'' 知识库(盘点→清单/内容→向量) → ③ system prompt 组装 → LLM
 ```
 
 ```mermaid
@@ -112,16 +143,19 @@ flowchart LR
     A[用户消息] --> B[查询改写<br>关键词→key别名映射]
     B --> C[检索 active 事实<br>bigram重叠+别名+置信度+时间衰减]
     C --> C2{时间意图?}
-    C2 -- "第一次/最早" --> C3[情景召回<br>全量消息按时间正序取最早]
-    C2 -- "上次/之前聊过" --> C4[情景召回<br>全量消息bigram检索]
+    C2 -- "第一次/最早" --> C3[情景召回<br>最早4条按时间正序]
+    C2 -- "上次/之前聊过" --> C4[情景召回<br>全量bigram Top-6]
     C2 -- 无 --> D
-    C3 --> D[取 Top-K 条事实<br>MAX_FACTS_INJECTED=8]
+    C3 --> D[取 Top-8 事实]
     C4 --> D
-    D --> K[知识库语义检索<br>Milvus 向量召回 不可达则降级]
-    K --> E[组装 system prompt<br>L3画像 + L2事实 + 情景记录 + 知识库片段]
+    D --> K{知识库意图?}
+    K -- "盘点: 有什么文件" --> K1[文件清单 list_docs<br>聚合文档名/块数/预览 60s缓存]
+    K -- 内容问题 --> K2[向量语义检索<br>Milvus Top-4 不可达降级]
+    K1 --> E[组装 system prompt<br>画像+用户属性+经验结论<br>+情景记录+知识库块]
+    K2 --> E
     E --> F[近期10条消息 L0]
     F --> G[调用 LLM]
-    G --> H[回复落盘 L1]
+    G --> H[回复落盘 L1 → 进入写路径 §4]
 ```
 
 ### 5.1 相关性评分公式（`memory_query.search_facts`）
@@ -187,19 +221,21 @@ score = 0.1（基线，冷启动保底）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/chat` | 对话入口。请求 `{user_id, message}`；响应含 `memory` 调试块（注入事实+分数、情景召回、知识库命中、变更列表） |
+| POST | `/api/v1/chat` | 对话入口。请求 `{user_id, message}`；响应含 `memory` 调试块（注入事实+分数、情景召回、知识库命中/清单、变更列表） |
 | GET | `/api/v1/memory/facts?user_id=&include_superseded=` | 查看 L2 事实（含 superseded 谱系） |
 | DELETE | `/api/v1/memory/facts/{id}` | 单条遗忘（硬删除，仅用户明确指定时） |
 | GET | `/api/v1/memory/profile/{user_id}` | 查看 L3 画像 |
+| GET | `/api/v1/memory/users` | 全部用户概览（消息数/记忆数/知识库分块数/称呼，供测试页用户列表） |
 | POST | `/api/v1/kb/upload` | 知识库纯文本入库 `{user_id, doc_name, text}` |
 | POST | `/api/v1/kb/upload-file` | 知识库文件入库（multipart，.txt/.md） |
 | GET | `/api/v1/kb/search?user_id=&q=` | 知识库语义检索 |
+| GET | `/api/v1/kb/docs?user_id=` | 知识库文件清单（盘点：文档名/分块数/归属/首段预览） |
 | GET | `/api/v1/kb/status` | 知识库健康状态（Milvus 连通性/分块数） |
 | POST | `/api/v1/kb/reconnect` | 手动重试 Milvus 连接 |
 | GET | `/health` | 健康检查（含 DB 连通性） |
 | GET | `/` | 测试页面（`app/static/index.html`） |
 
-测试页面提供：对话窗口、每轮记忆调试（注入事实/变更类型可视化）、右侧记忆谱系面板、6 个快捷测试场景（含问句防污染测试）。
+测试页面提供：对话窗口、每轮记忆调试（注入事实/变更类型可视化）、右侧记忆谱系面板、左侧用户列表（点击切换）、9 个快捷测试场景（自我介绍/跨对话提问/改称呼/问句防污染/知识库 RAG/文件盘点等）。
 
 ## 7. 配置项（`.env`）
 

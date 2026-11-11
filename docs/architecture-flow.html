@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>memory-agent-api 全链路调用流转 · 动态演示</title>
+<style>
+  :root {
+    --bg: #f6f8fa; --panel: #ffffff; --ink: #1e293b; --muted: #64748b;
+    --line: #cbd5e1; --read: #2563eb; --llm: #7c3aed; --write: #059669;
+    --store: #d97706; --user: #475569; --warn: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { padding: 18px 28px 6px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 28px; align-items: center; }
+  .controls button { border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+      padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all .15s; }
+  .controls button:hover { border-color: var(--read); color: var(--read); }
+  .controls button.on { background: var(--read); border-color: var(--read); color: #fff; }
+  .controls .hint { color: var(--muted); font-size: 12px; margin-left: 4px; }
+  .stage { margin: 0 28px; background: var(--panel); border: 1px solid var(--line);
+           border-radius: 14px; overflow: hidden; }
+  svg { display: block; width: 100%; height: auto; }
+  .node rect { transition: all .25s; }
+  .node.active rect { stroke-width: 3.5 !important; filter: drop-shadow(0 0 5px rgba(245,158,11,.75)); }
+  .node.dim rect { opacity: .45; }
+  .edge { fill: none; stroke: var(--line); stroke-width: 1.8; transition: stroke .2s; }
+  .edge.hot { stroke: #f59e0b; stroke-width: 2.6; }
+  .pkt { opacity: 0; }
+  .narr { padding: 12px 28px 4px; min-height: 52px; }
+  .narr .step { display: inline-block; background: var(--panel); border: 1px solid var(--line);
+      border-left: 4px solid var(--read); border-radius: 8px; padding: 8px 14px; font-size: 13px; }
+  .narr .step b { color: var(--read); }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 28px 20px; color: var(--muted); font-size: 12px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  footer { padding: 0 28px 24px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>memory-agent-api · 全链路调用流转（无 session，仅凭 user_id 的动态记忆架构）</h1>
+  <div class="sub">点下面的场景按钮，观看一条消息在系统里的真实路径：读取路径 → System Prompt 组装 → DeepSeek LLM → 写入管线 → 存储层。动画与 <code>docs/memory-architecture.md</code> 一一对应。</div>
+</header>
+
+<div class="controls" id="btns">
+  <span class="hint">▶ 选择一个问题场景：</span>
+  <button data-sc="A">自我介绍（普通对话）</button>
+  <button data-sc="B">“我叫什么名字？”</button>
+  <button data-sc="C">“我第一次提问是什么？”</button>
+  <button data-sc="D">“现在有什么文件？”</button>
+  <button data-sc="E">“国庆节怎么放假？”</button>
+  <button data-sc="W" style="margin-left:12px">仅看：写入管线</button>
+</div>
+
+<div class="stage"><svg id="cv" viewBox="0 0 1180 660" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div class="narr"><span class="step" id="narr">点击上方按钮开始演示…</span></div>
+
+<div class="legend">
+  <span><i style="background:#f8fafc;border:1.5px solid var(--user)"></i>入口/路由</span>
+  <span><i style="background:#eff6ff;border:1.5px solid var(--read)"></i>记忆读取路径</span>
+  <span><i style="background:#f5f3ff;border:1.5px solid var(--llm)"></i>LLM</span>
+  <span><i style="background:#ecfdf5;border:1.5px solid var(--write)"></i>写入管线（抽取→冲突消解→画像）</span>
+  <span><i style="background:#fffbeb;border:1.5px solid var(--store)"></i>存储层</span>
+  <span><i style="background:#f59e0b;border-radius:50%"></i>= 一次调用中流动的数据包</span>
+</div>
+<footer>
+  入库链路（图中未动画演示）：/api/v1/kb/upload → 段落分块(500/50) → fastembed bge-small-zh 本地向量(512维) → Milvus kb_chunks（global 共享 + 私有）。<br>
+  设计原则：RAG 检索负责“找内容片段”，盘点问题走“文件清单层”；知识库全员共享，个人记忆按 user_id 隔离——两个正交维度。
+</footer>
+
+<script>
+"use strict";
+const Z = {
+  user:  { stroke: "#475569", fill: "#f8fafc" },
+  read:  { stroke: "#2563eb", fill: "#eff6ff" },
+  llm:   { stroke: "#7c3aed", fill: "#f5f3ff" },
+  write: { stroke: "#059669", fill: "#ecfdf5" },
+  store: { stroke: "#d97706", fill: "#fffbeb" },
+};
+
+const NODES = [
+  { id:"n_user",    x:30,  y:50,  w:150, h:60, z:"user",  l:"用户消息",           s:"浏览器/测试页 · 仅 user_id" },
+  { id:"n_chat",    x:30,  y:175, w:150, h:64, z:"user",  l:"FastAPI 端点",       s:"POST /api/v1/chat" },
+  { id:"n_intent",  x:30,  y:300, w:150, h:60, z:"user",  l:"意图路由",           s:"时间意图? 盘点意图?" },
+  { id:"n_profile", x:285, y:38,  w:205, h:54, z:"read",  l:"L3 用户画像（常驻）", s:"user_profiles" },
+  { id:"n_facts",   x:285, y:112, w:205, h:54, z:"read",  l:"L2 事实混合评分检索", s:"memory_facts · Top-8" },
+  { id:"n_epi",     x:285, y:186, w:205, h:54, z:"read",  l:"情景时间召回",       s:"chat_messages 全量日志" },
+  { id:"n_kbdocs",  x:285, y:260, w:205, h:54, z:"read",  l:"知识库·文件清单",    s:"list_docs · 60s TTL 缓存" },
+  { id:"n_kbvec",   x:285, y:334, w:205, h:54, z:"read",  l:"知识库·语义检索",    s:"embedding → Milvus Top-4" },
+  { id:"n_recent",  x:285, y:408, w:205, h:54, z:"read",  l:"L0 近期 10 条",      s:"chat_messages 工作集" },
+  { id:"n_asm",     x:565, y:212, w:180, h:76, z:"read",  l:"System Prompt 组装", s:"画像+属性+经验+情景+知识库" },
+  { id:"n_llm",     x:565, y:345, w:180, h:64, z:"llm",   l:"DeepSeek LLM",       s:"OpenAI 兼容 · deepseek-flash" },
+  { id:"n_reply",   x:840, y:48,  w:195, h:52, z:"write", l:"① 回复落盘 L1",      s:"append-only 唯一事实源" },
+  { id:"n_extract", x:840, y:123, w:195, h:56, z:"write", l:"② 事实抽取",         s:"用户属性 + exp.* 经验" },
+  { id:"n_conflict",x:840, y:203, w:195, h:56, z:"write", l:"③ 冲突消解",         s:"印证/新替旧(留谱系)/并存" },
+  { id:"n_profup",  x:840, y:283, w:195, h:52, z:"write", l:"④ 画像更新",         s:"display_name 同步" },
+  { id:"n_pg",      x:285, y:558, w:340, h:64, z:"store", l:"PostgreSQL（腾讯云）", s:"chat_messages · memory_facts · user_profiles" },
+  { id:"n_mv",      x:745, y:558, w:330, h:64, z:"store", l:"Milvus :19530",      s:"kb_chunks：global 共享 + 私有 · 404 块" },
+];
+
+const EDGES = [
+  { id:"e_u_chat",  a:"n_user",  b:"n_chat",    sa:"b", sb:"t" },
+  { id:"e_ci",      a:"n_chat",  b:"n_intent",  sa:"b", sb:"t" },
+  { id:"e_ip",      a:"n_intent",b:"n_profile", sa:"r", sb:"l" },
+  { id:"e_if",      a:"n_intent",b:"n_facts",   sa:"r", sb:"l" },
+  { id:"e_ie",      a:"n_intent",b:"n_epi",     sa:"r", sb:"l" },
+  { id:"e_ikd",     a:"n_intent",b:"n_kbdocs",  sa:"r", sb:"l" },
+  { id:"e_ikv",     a:"n_intent",b:"n_kbvec",   sa:"r", sb:"l" },
+  { id:"e_p_asm",   a:"n_profile",b:"n_asm",    sa:"r", sb:"l" },
+  { id:"e_f_asm",   a:"n_facts", b:"n_asm",     sa:"r", sb:"l" },
+  { id:"e_e_asm",   a:"n_epi",   b:"n_asm",     sa:"r", sb:"l" },
+  { id:"e_kd_asm",  a:"n_kbdocs",b:"n_asm",     sa:"r", sb:"l" },
+  { id:"e_kv_asm",  a:"n_kbvec", b:"n_asm",     sa:"r", sb:"l" },
+  { id:"e_r_asm",   a:"n_recent",b:"n_asm",     sa:"r", sb:"l" },
+  { id:"e_asm_llm", a:"n_asm",   b:"n_llm",     sa:"b", sb:"t" },
+  { id:"e_llm_reply",a:"n_llm",  b:"n_reply",   sa:"r", sb:"l" },
+  { id:"e_re_ex",   a:"n_reply", b:"n_extract", sa:"b", sb:"t" },
+  { id:"e_ex_co",   a:"n_extract",b:"n_conflict",sa:"b", sb:"t" },
+  { id:"e_co_pu",   a:"n_conflict",b:"n_profup",sa:"b", sb:"t" },
+  { id:"e_pu_pg",   a:"n_profup",b:"n_pg",      sa:"b", sb:"t" },
+];
+
+const svg = document.getElementById("cv");
+const NS = "http://www.w3.org/2000/svg";
+
+function anchor(n, side) {
+  switch (side) {
+    case "l": return { x: n.x,          y: n.y + n.h / 2 };
+    case "r": return { x: n.x + n.w,    y: n.y + n.h / 2 };
+    case "t": return { x: n.x + n.w / 2, y: n.y };
+    case "b": return { x: n.x + n.w / 2, y: n.y + n.h };
+  }
+}
+function edgePath(a, b, sa, sb) {
+  const A = anchor(a, sa), B = anchor(b, sb);
+  if (sa === "l" || sa === "r") {
+    const dx = Math.max(40, Math.abs(B.x - A.x) * 0.55), s = sa === "r" ? 1 : -1;
+    return `M${A.x},${A.y} C${A.x + s * dx},${A.y} ${B.x - s * dx},${B.y} ${B.x},${B.y}`;
+  }
+  const dy = Math.max(30, Math.abs(B.y - A.y) * 0.55), s = sa === "b" ? 1 : -1;
+  return `M${A.x},${A.y} C${A.x},${A.y + s * dy} ${B.x},${B.y - s * dy} ${B.x},${B.y}`;
+}
+
+// ---- 渲染 ----
+const gEdges = document.createElementNS(NS, "g"); svg.appendChild(gEdges);
+const gNodes = document.createElementNS(NS, "g"); svg.appendChild(gNodes);
+const gPkts  = document.createElementNS(NS, "g"); svg.appendChild(gPkts);
+
+const edgeEls = {}, nodeEls = {};
+for (const e of EDGES) {
+  const p = document.createElementNS(NS, "path");
+  p.setAttribute("d", edgePath(NODES.find(n => n.id === e.a), NODES.find(n => n.id === e.b), e.sa, e.sb));
+  p.setAttribute("class", "edge"); p.setAttribute("id", e.id);
+  gEdges.appendChild(p); edgeEls[e.id] = p;
+}
+for (const n of NODES) {
+  const g = document.createElementNS(NS, "g"); g.setAttribute("class", "node"); g.setAttribute("id", n.id);
+  const c = Z[n.z];
+  const r = document.createElementNS(NS, "rect");
+  r.setAttribute("x", n.x); r.setAttribute("y", n.y); r.setAttribute("width", n.w); r.setAttribute("height", n.h);
+  r.setAttribute("rx", 10); r.setAttribute("fill", c.fill); r.setAttribute("stroke", c.stroke); r.setAttribute("stroke-width", 1.6);
+  const t1 = document.createElementNS(NS, "text");
+  t1.setAttribute("x", n.x + n.w / 2); t1.setAttribute("y", n.y + (n.h === 54 ? 22 : n.h / 2 - 4));
+  t1.setAttribute("text-anchor", "middle"); t1.setAttribute("font-size", 13.5); t1.setAttribute("font-weight", 700);
+  t1.setAttribute("fill", "#1e293b"); t1.textContent = n.l;
+  const t2 = document.createElementNS(NS, "text");
+  t2.setAttribute("x", n.x + n.w / 2); t2.setAttribute("y", n.y + (n.h === 54 ? 40 : n.h / 2 + 15));
+  t2.setAttribute("text-anchor", "middle"); t2.setAttribute("font-size", 11); t2.setAttribute("fill", "#64748b");
+  t2.textContent = n.s;
+  g.appendChild(r); g.appendChild(t1); g.appendChild(t2);
+  gNodes.appendChild(g); nodeEls[n.id] = g;
+}
+
+// ---- 动画 ----
+function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+function animateAlong(edgeId, dur, color) {
+  return new Promise(resolve => {
+    const path = edgeEls[edgeId], len = path.getTotalLength();
+    path.classList.add("hot");
+    const dot = document.createElementNS(NS, "circle");
+    dot.setAttribute("r", 5.5); dot.setAttribute("fill", color);
+    dot.setAttribute("stroke", "#fff"); dot.setAttribute("stroke-width", 1.5);
+    dot.setAttribute("class", "pkt"); gPkts.appendChild(dot);
+    const t0 = performance.now();
+    (function frame(now) {
+      const t = Math.min(1, (now - t0) / dur);
+      const pt = path.getPointAtLength(t * len);
+      dot.setAttribute("cx", pt.x); dot.setAttribute("cy", pt.y); dot.setAttribute("opacity", 1);
+      if (t < 1) requestAnimationFrame(frame);
+      else { dot.remove(); setTimeout(() => path.classList.remove("hot"), 350); resolve(); }
+    })(t0);
+  });
+}
+function highlight(id) { nodeEls[id].classList.add("active"); }
+function clearAll() {
+  Object.values(nodeEls).forEach(g => g.classList.remove("active", "dim"));
+  Object.values(edgeEls).forEach(p => p.classList.remove("hot"));
+  gPkts.innerHTML = "";
+}
+const narr = document.getElementById("narr");
+function say(html) { narr.innerHTML = html; }
+const ZC = { user:"#475569", read:"#2563eb", llm:"#7c3aed", write:"#059669", store:"#d97706" };
+function nodeZone(id) { return NODES.find(n => n.id === id).z; }
+
+const INTRO = [
+  { n:"n_user",   t:"用户发出消息 —— <b>只带 user_id，没有任何 session</b>" },
+  { p:"e_u_chat", t:"请求进入对话端点 POST /api/v1/chat" },
+  { n:"n_chat" },
+  { p:"e_ci" },
+  { n:"n_intent", t:"意图路由：是否时间意图（第一次/上次）？是否盘点意图（有什么文件）？" },
+];
+const OUTRO = [
+  { p:"e_asm_llm", t:"组装好的 system prompt + L0 近期对话 + 当前消息 → 发给 DeepSeek" },
+  { n:"n_llm" },
+  { p:"e_llm_reply", t:"LLM 生成回复（读取路径到此结束，耗时≈读取+生成）" },
+  { n:"n_reply" },
+  { p:"e_re_ex" },
+  { n:"n_extract", t:"写入管线启动：LLM 抽取<b>用户属性</b>与 <b>exp.* 经验结论</b>（疑问句防污染）" },
+  { n:"n_extract" },
+  { p:"e_ex_co" },
+  { n:"n_conflict", t:"冲突消解：同值印证+0.05 / 单值新替旧（旧账保留谱系）/ 多值并存" },
+  { p:"e_pu_pg" },
+  { n:"n_pg", t:"写回 PostgreSQL：memory_facts 增/改 + 画像同步 —— <b>回复完成时记忆已更新</b>" },
+  { n:"n_profup" },
+];
+
+const SCEN = {
+  A: { label:"自我介绍（普通对话）", steps: [
+    ...INTRO,
+    { p:"e_ip" }, { n:"n_profile", t:"L3 画像无条件常驻注入（称呼缓存视图）" },
+    { p:"e_p_asm" },
+    { p:"e_if" }, { n:"n_facts", t:"L2 事实混合评分检索：bigram 重叠 + key 别名 + 置信度 + 时间衰减" },
+    { p:"e_f_asm" },
+    { n:"n_recent" }, { p:"e_r_asm" },
+    { n:"n_asm", t:"组装 system prompt：【用户画像】【用户属性】【经验结论】+ 使用规则" },
+    ...OUTRO,
+  ]},
+  B: { label:"问身份（别名召回）", steps: [
+    ...INTRO,
+    { p:"e_ip" }, { n:"n_profile", t:"“我叫什么”→ 画像缓存直接给出称呼" },
+    { p:"e_p_asm" },
+    { p:"e_if" }, { n:"n_facts", t:"查询改写：关键词“名字”→ identity.name 别名命中，+1.2 分稳居 Top-1" },
+    { p:"e_f_asm" },
+    { n:"n_asm", t:"无需用户重复自我介绍 —— 这就是跨对话记忆" },
+    ...OUTRO,
+  ]},
+  C: { label:"问“第一次提问”（时间召回）", steps: [
+    ...INTRO,
+    { p:"e_ie" }, { n:"n_epi", t:"命中时间意图 first：全量 chat_messages 按时间正序取最早 4 条（评分的时间衰减与“第一次”相反，所以必须走独立召回）" },
+    { p:"e_e_asm" },
+    { n:"n_asm", t:"以【历史对话记录】块注入，LLM 可引用原文回答" },
+    ...OUTRO,
+  ]},
+  D: { label:"问“有什么文件？”（清单层）", steps: [
+    ...INTRO,
+    { p:"e_ikd" }, { n:"n_kbdocs", t:"命中<b>盘点意图</b>：跳过向量检索！top-k 片段对“列出全部文件”毫无帮助" },
+    { n:"n_kbdocs" },
+    { n:"n_mv", t:"list_docs 聚合 Milvus：14 个文档 / 404 块 / 首段预览（60s TTL 缓存，入库即失效）" },
+    { p:"e_kd_asm" },
+    { n:"n_asm", t:"【知识库文件清单】整块注入 → LLM 按单如实盘点，不遗漏不编造" },
+    ...OUTRO,
+  ]},
+  E: { label:"问文档内容（RAG 向量召回）", steps: [
+    ...INTRO,
+    { p:"e_ikv" }, { n:"n_kbvec", t:"内容问题：问题文本 → bge-small-zh 本地 embedding → Milvus 向量召回 Top-4（global 共享 + 本人私有）" },
+    { n:"n_mv" },
+    { p:"e_kv_asm" },
+    { n:"n_asm", t:"【知识库片段】注入，要求 LLM 引用时注明文档名、找不到就如实说明" },
+    ...OUTRO,
+  ]},
+  W: { label:"仅看：写入管线", steps: [
+    { n:"n_user", t:"一次对话结束后，看记忆如何沉淀（读路径略）" },
+    { n:"n_reply", t:"① 回复落盘 chat_messages —— append-only，摘要只是有损投影，原文永不覆盖" },
+    { p:"e_re_ex" },
+    { n:"n_extract", t:"② LLM 抽取两类事实：用户属性（identity/work/preference/goal）+ 经验结论（exp.solution/decision/lesson/finding）" },
+    { p:"e_ex_co" },
+    { n:"n_conflict", t:"③ 冲突消解：同 key 同 value → 印证(置信度+0.05)；单值事实新替旧 → 旧的标记 superseded 但<b>不物理删除</b>（谱系可查）" },
+    { p:"e_co_pu" },
+    { n:"n_profup", t:"④ identity.name 变更时同步 user_profiles.display_name" },
+    { p:"e_pu_pg" },
+    { n:"n_pg", t:"全部写回 PostgreSQL —— 下一次对话，这些记忆就会出现在读取路径里" },
+  ]},
+};
+
+let running = false;
+async function run(key) {
+  if (running) return;
+  running = true;
+  document.querySelectorAll("#btns button").forEach(b => b.classList.toggle("on", b.dataset.sc === key));
+  const sc = SCEN[key];
+  clearAll();
+  const color = "#f59e0b";
+  for (const step of sc.steps) {
+    if (step.n) {
+      highlight(step.n);
+      if (step.t) say(`<b>${sc.label}</b> ｜ ${step.t}`);
+      await sleep(560);
+    } else {
+      const zone = nodeZone(EDGES.find(e => e.id === step.p).a);
+      say(`<b>${sc.label}</b> ｜ ${step.t || "数据流动中…"}`);
+      await animateAlong(step.p, 760, ZC[zone] || color);
+    }
+  }
+  say(`<b>${sc.label}</b> ｜ ✅ 流转完成 —— 全程无 session：读取按相关性动态组装，写入按 user_id 归属沉淀。`);
+  running = false;
+}
+document.getElementById("btns").addEventListener("click", ev => {
+  const key = ev.target.dataset && ev.target.dataset.sc;
+  if (key) run(key);
+});
+setTimeout(() => run("A"), 700);
+</script>
+</body>
+</html>
