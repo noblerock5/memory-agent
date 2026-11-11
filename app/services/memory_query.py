@@ -2,7 +2,8 @@
 
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,13 @@ from app.core.config import settings
 from app.models.chat_message import ChatMessage
 from app.models.memory_fact import MemoryFact
 from app.models.user_profile import UserProfile
+
+try:  # 用户口中的"昨天/前天"按中国时区换算, 而不是数据库的 UTC
+    from zoneinfo import ZoneInfo
+
+    _LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+except Exception:  # pragma: no cover
+    _LOCAL_TZ = timezone.utc
 
 # 查询改写: 问题关键词 -> 记忆 key 别名 (演示版"查询改写"步骤)
 _KEY_ALIASES = {
@@ -123,6 +131,81 @@ def detect_temporal_intent(query: str) -> str | None:
     return None
 
 
+# ---- 日期意图: "昨天/前天/今天/上周/X月X日" 问的是时间窗, 不是主题词 ----
+# 这类问题没有可检索的关键词, 必须按 created_at 区间直查 (2026-11-11 实测踩坑:
+# "昨天我跟你说了什么"不命中任何关键词, LLM 只看到近10条就答"查不到昨天")
+_DATE_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"昨天|昨日"), "day-1"),
+    (re.compile(r"前天|前日"), "day-2"),
+    (re.compile(r"今天|今日|刚才|刚刚|早些时候"), "today"),
+    (re.compile(r"上周|过去一周|最近一周|近几天|这几天|上周[一二三四五六日天]"), "week"),
+]
+_MD_RE = re.compile(r"(\d{1,2})月(\d{1,2})[日号]")
+
+
+def detect_date_intent(query: str) -> tuple[str, datetime, datetime] | None:
+    """检测日期意图, 返回 (标签, start_utc, end_utc); 边界按中国时区换算为 UTC."""
+    now = datetime.now(_LOCAL_TZ)
+
+    def day_start(d: datetime) -> datetime:
+        return d.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    label = next((key for pat, key in _DATE_PATTERNS if pat.search(query)), None)
+    if label is None:
+        m = _MD_RE.search(query)
+        if not m:
+            return None
+        try:  # "3月5日" -> 今年当天窗口 (跨年判断从简, 演示够用)
+            d = day_start(now).replace(month=int(m.group(1)), day=int(m.group(2)))
+        except ValueError:
+            return None
+        label = f"{m.group(1)}月{m.group(2)}日"
+        return (label, d.astimezone(timezone.utc), (d + timedelta(days=1)).astimezone(timezone.utc))
+
+    if label == "day-1":
+        start, end, name = day_start(now) - timedelta(days=1), day_start(now), "昨天"
+    elif label == "day-2":
+        start, end, name = day_start(now) - timedelta(days=2), day_start(now) - timedelta(days=1), "前天"
+    elif label == "today":
+        start, end, name = day_start(now), now, "今天"
+    else:  # week
+        start, end, name = day_start(now) - timedelta(days=7), now, "最近一周"
+    return (f"{name}({start:%m-%d})", start.astimezone(timezone.utc), end.astimezone(timezone.utc))
+
+
+class EpisodicResult(NamedTuple):
+    """情景召回结果: msgs=时间正序原始消息; window_label 供前端与 prompt 标注时间窗."""
+
+    msgs: list[dict]
+    intent: str | None = None
+    window_label: str | None = None
+
+
+async def recall_messages_in_window(
+    session: AsyncSession, user_id: str, start: datetime, end: datetime, limit: int = 12
+) -> list[dict]:
+    """按时间窗直查原始消息 (user+assistant 双角色, 时间正序)."""
+    res = await session.execute(
+        select(ChatMessage)
+        .where(
+            ChatMessage.user_id == user_id,
+            ChatMessage.created_at >= start,
+            ChatMessage.created_at < end,
+        )
+        .order_by(ChatMessage.id.asc())
+        .limit(limit)
+    )
+    return [
+        {
+            "role": m.role,
+            "content": m.content,
+            "id": m.id,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in res.scalars().all()
+    ]
+
+
 async def recall_first_messages(
     session: AsyncSession, user_id: str, limit: int = 4
 ) -> list[dict]:
@@ -180,16 +263,21 @@ async def search_all_messages(
     return scored[:limit]
 
 
-async def recall_episodic(session: AsyncSession, user_id: str, query: str) -> list[dict]:
-    """情景记忆召回入口: 按时间意图路由到对应策略, 返回按时间正序的原始消息."""
+async def recall_episodic(session: AsyncSession, user_id: str, query: str) -> EpisodicResult:
+    """情景记忆召回入口: 日期意图(时间窗直查)优先于关键词意图, 返回时间正序原始消息."""
+    date_hit = detect_date_intent(query)
+    if date_hit:
+        label, start, end = date_hit
+        msgs = await recall_messages_in_window(session, user_id, start, end)
+        return EpisodicResult(msgs, "date", label)
     intent = detect_temporal_intent(query)
     if intent == "first":
         hits = await recall_first_messages(session, user_id)
-        return sorted(hits, key=lambda x: x["id"])
+        return EpisodicResult(sorted(hits, key=lambda x: x["id"]), "first")
     if intent == "past":
         hits = await search_all_messages(session, user_id, query)
-        return sorted(hits, key=lambda x: x["id"])
-    return []
+        return EpisodicResult(sorted(hits, key=lambda x: x["id"]), "past")
+    return EpisodicResult([])
 
 
 async def list_facts(

@@ -49,6 +49,7 @@ class MemoryDebug(BaseModel):
     recent_messages_used: int
     episodic_used: int = 0
     episodic: list[EpisodicMsg] = []
+    episodic_note: str | None = None  # 日期类召回的时间窗标注(昨天/前天等)
     kb_used: int = 0
     kb: list[KbHit] = []
     kb_docs: list[KbDocItem] = []  # 盘点类问题(有什么文件)时注入的文件清单

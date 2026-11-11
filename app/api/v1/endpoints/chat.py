@@ -70,6 +70,7 @@ async def chat(
                 EpisodicMsg(role=m["role"], content=m["content"], created_at=m.get("created_at"))
                 for m in bundle.episodic
             ],
+            episodic_note=bundle.episodic_note,
             kb_used=len(bundle.kb_hits),
             kb=[
                 KbHit(

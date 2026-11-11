@@ -32,6 +32,7 @@ class ContextBundle:
     facts: list[dict] = field(default_factory=list)
     recent: list[dict] = field(default_factory=list)
     episodic: list[dict] = field(default_factory=list)
+    episodic_note: str | None = None  # 日期类召回的时间窗标注(含"无记录"提示)
     kb_hits: list[dict] = field(default_factory=list)
     kb_docs: list[dict] = field(default_factory=list)  # 盘点类问题时注入的文件清单
 
@@ -52,6 +53,7 @@ def build_system_prompt(
     episodic: list[dict] | None = None,
     kb_hits: list[dict] | None = None,
     kb_docs: list[dict] | None = None,
+    episodic_note: str | None = None,
 ) -> str:
     lines = [
         "你是用户的长期个人助手。以下是关于用户的持久记忆（跨对话有效）。",
@@ -85,8 +87,10 @@ def build_system_prompt(
         lines.append("- （暂无，随对话积累）")
     lines.append("")
 
-    if episodic:
-        lines.append("【历史对话记录】（从完整对话日志中召回的原始消息，按时间正序，可引用原文回答）")
+    if episodic or episodic_note:
+        lines.append("【历史对话记录】（从完整对话日志中召回的原始消息，可引用原文回答）")
+        if episodic_note:
+            lines.append(f"- 时间范围：{episodic_note}")
         for m in episodic:
             lines.append(f"- {_fmt_dt(m['created_at'])} {m['role']}：{m['content'][:200]}")
         lines.append("")
@@ -114,6 +118,8 @@ def build_system_prompt(
     lines.append("3. 记忆中找不到的信息如实说明，不要编造。")
     lines.append("4. 若【历史对话记录】中有与问题相关的内容，直接引用原文回答。")
     lines.append("5. 问\"有什么文件/哪些文档\"时，严格按【知识库文件清单】逐个盘点，不要遗漏或编造文件名。")
+    lines.append("6. 用户问某段时间（昨天/前天/今天等）说了什么时，严格以【历史对话记录】标注的时间范围为准；")
+    lines.append("   该时间范围内若无消息记录，就如实回答查不到，绝不能拿近期其他时间的消息冒充。")
     return "\n".join(lines)
 
 
@@ -121,7 +127,15 @@ async def assemble_context(session: AsyncSession, user_id: str, query: str) -> C
     profile = await get_profile(session, user_id)
     facts = await search_facts(session, user_id, query)
     recent = await recent_messages(session, user_id)
-    episodic = await recall_episodic(session, user_id, query)
+    ep = await recall_episodic(session, user_id, query)
+    episodic = ep.msgs
+    episodic_note = None
+    if ep.intent == "date":
+        episodic_note = (
+            f"{ep.window_label}，共召回 {len(episodic)} 条原始消息"
+            if episodic
+            else f"{ep.window_label}时间窗内没有任何对话记录（用户当天未与助手对话），请如实告知查不到"
+        )
     # 知识库 (Milvus 不可达时内部降级为空列表; embedding 计算较重, 用线程池避免阻塞事件循环)
     kb_hits: list[dict] = []
     kb_docs: list[dict] = []
@@ -140,11 +154,12 @@ async def assemble_context(session: AsyncSession, user_id: str, query: str) -> C
         for m in recent
     ]
     return ContextBundle(
-        system_prompt=build_system_prompt(profile, facts, episodic, kb_hits, kb_docs),
+        system_prompt=build_system_prompt(profile, facts, episodic, kb_hits, kb_docs, episodic_note),
         profile=profile,
         facts=facts,
         recent=recent_dicts,
         episodic=episodic,
+        episodic_note=episodic_note,
         kb_hits=kb_hits,
         kb_docs=kb_docs,
     )

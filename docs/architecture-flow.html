@@ -78,6 +78,7 @@
   <button data-sc="A">自我介绍（普通对话）</button>
   <button data-sc="B">“我叫什么名字？”</button>
   <button data-sc="C">“我第一次提问是什么？”</button>
+  <button data-sc="F">“昨天我跟你说了什么？”</button>
   <button data-sc="D">“现在有什么文件？”</button>
   <button data-sc="E">“国庆节怎么放假？”</button>
   <button data-sc="W" style="margin-left:10px">▶ 对话→记忆：压缩蒸馏全流程</button>
@@ -195,6 +196,7 @@ var CARDS = {
     ["过滤", "只取 status=active；superseded 旧账不参与"]]},
   n_epi: { title:"取值：情景记忆时间召回（全量日志）", rows:[
     ["first", "“第一次/最早”→ 全量 chat_messages 按时间正序取最早 4 条"],
+    ["date(新增)", "“昨天/前天/今天/上周/X月X日”→ 按中国时区换算 UTC 时间窗，按 created_at 区间直查（user+assistant 双角色，时间正序 ≤12 条）；窗内无记录时注入“无记录”标注强制诚实回答"],
     ["past", "“上次/之前聊过”→ 全量 bigram 检索 Top-6（≤2000条保护）"],
     ["返回示例", "<code>[2026-11-09 09:12] user: 我叫李明，在克雷登工业负责AI项目部…</code>（原文）"]]},
   n_kbdocs: { title:"取值：知识库文件清单（盘点专用）", rows:[
@@ -356,7 +358,7 @@ var INTRO = [
   { n:"n_user", t:"用户发出消息 —— <b>只带 user_id，没有任何 session 字段</b>" },
   { p:"e_u_chat" }, { n:"n_chat" },
   { p:"e_ci" },
-  { n:"n_intent", t:"意图路由：时间意图（第一次/上次）？盘点意图（有什么文件）？" },
+  { n:"n_intent", t:"意图路由：日期意图（昨天/前天/今天）？时间意图（第一次/上次）？盘点意图（有什么文件）？" },
 ];
 var OUTRO = [
   { p:"e_asm_llm", t:"system prompt + L0 近期对话 + 当前消息 → 发给 DeepSeek" },
@@ -396,6 +398,11 @@ var SCEN = {
     { p:"e_ie" }, { n:"n_epi", t:"时间意图 first：全量日志按时间正序取最早 4 条（评分的时间衰减与“第一次”相反，必须走独立召回）" },
     { p:"e_e_asm" },
     { n:"n_asm", t:"以【历史对话记录】块注入，LLM 引用原文回答" },
+  ], OUTRO) },
+  F: { label:"问“昨天说了什么？”（日期时间窗召回）", steps: [].concat(INTRO, [
+    { p:"e_ie" }, { n:"n_epi", t:"命中<b>日期意图</b>：“昨天”→ 按中国时区换算 UTC 时间窗 [11-10 00:00, 11-11 00:00]，按 created_at 区间直查双角色消息——<b>关键词检索在此失效</b>（问题里没有主题词）" },
+    { p:"e_e_asm" },
+    { n:"n_asm", t:"【历史对话记录】注入并标注时间范围；时间窗内无记录时，prompt 明确要求 LLM 如实回答“查不到”，<b>不得拿近期消息冒充该时段</b>" },
   ], OUTRO) },
   D: { label:"问“有什么文件？”（清单层）", steps: [].concat(INTRO, [
     { p:"e_ikd" }, { n:"n_kbdocs", t:"命中<b>盘点意图</b>：跳过向量检索 —— Top-4 片段对“列出全部文件”毫无帮助" },
