@@ -16,6 +16,13 @@ from app.services.memory_query import (
     search_facts,
 )
 
+try:  # 时间标签统一用北京时间——用户说"昨天"指北京日历日
+    from zoneinfo import ZoneInfo
+
+    _LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+except Exception:  # pragma: no cover
+    _LOCAL_TZ = timezone.utc
+
 # 盘点类意图: 问知识库里"有什么文件/哪些文档"是聚合问题, 向量检索无法回答,
 # 必须走文件清单层 (knowledge.list_docs) 而不是语义检索 top-k
 _LIST_INTENT_RE = re.compile(
@@ -38,11 +45,12 @@ class ContextBundle:
 
 
 def _fmt_dt(dt_str: str | None) -> str:
+    """北京时间短标签 (月-日 时:分)——归日必须精确到时刻, 只给日期不够."""
     if not dt_str:
         return "未知时间"
     try:
-        dt = datetime.fromisoformat(dt_str).astimezone(timezone.utc)
-        return dt.strftime("%Y-%m-%d")
+        dt = datetime.fromisoformat(dt_str).astimezone(_LOCAL_TZ)
+        return dt.strftime("%m-%d %H:%M")
     except ValueError:
         return "未知时间"
 
@@ -120,6 +128,8 @@ def build_system_prompt(
     lines.append("5. 问\"有什么文件/哪些文档\"时，严格按【知识库文件清单】逐个盘点，不要遗漏或编造文件名。")
     lines.append("6. 用户问某段时间（昨天/前天/今天等）说了什么时，严格以【历史对话记录】标注的时间范围为准；")
     lines.append("   该时间范围内若无消息记录，就如实回答查不到，绝不能拿近期其他时间的消息冒充。")
+    lines.append("6b. 近期对话的每条消息都带 [月-日 时:分] 北京时间标签——按时间戳归日：窗口里的旧消息")
+    lines.append("   （如标注为昨天/上周）不得算进\"今天\"或\"本轮\"；时间戳就是归日的唯一依据。")
     lines.append("7. 所有记忆检索均按当前 user_id 过滤——你上下文中的消息与事实都属于当前用户，")
     lines.append("   其他用户的消息不可能出现；回答\"是谁问的\"时以【历史对话记录】中的时间戳为依据，")
     lines.append("   未检索到的条目如实说明，不要推断为\"误加\"或\"不存在\"。")

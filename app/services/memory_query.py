@@ -327,7 +327,25 @@ async def recall_episodic(
     if date_hit:
         label, start, end = date_hit
         msgs = await recall_messages_in_window(session, user_id, start, end)
-        return EpisodicResult(msgs, "date", label)
+        note = f"{label}时间窗召回 {len(msgs)} 条"
+        # 补充: 去掉日期词后的主题词在全量日志里找相似历史提问——
+        # "X是我今天问的吗" 这类问题, 今天窗查不到昨天问过的同一问题
+        topical = re.sub(
+            r"昨天|前天|今天|今日|昨日|上周|最近|过去一周|近几天|这几天|\d{1,2}月\d{1,2}[日号]|"
+            r"我问过|说了什么|问过什么|聊过什么|讲过什么|你说了|我问了|是我问的吗|吗",
+            "",
+            query,
+        )
+        topical = topical.strip(" ？?。，,！!的我是你吗")
+        if len(topical) >= 4:
+            extra = await search_all_messages(session, user_id, topical, limit=4)
+            if extra:
+                by_id = {m["id"]: m for m in msgs}
+                for m in extra:
+                    by_id.setdefault(m["id"], m)
+                msgs = sorted(by_id.values(), key=lambda x: x["id"])[:14]
+                note += f"；主题词「{topical[:24]}」在全量日志中另命中 {len(extra)} 条相似消息，一并注入（注意各自时间戳）"
+        return EpisodicResult(msgs, "date", label, note)
     if _ANAPHORA_RE.search(query) and prev_assistant_text:
         items = extract_list_items(prev_assistant_text, anaphora_item_count(query))
         if items:
