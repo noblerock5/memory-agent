@@ -97,7 +97,7 @@
   <span><i style="background:#f5f3ff;border:1.5px solid var(--llm)"></i>LLM</span>
   <span><i style="background:#ecfdf5;border:1.5px solid var(--write)"></i>写入管线（压缩蒸馏→结构化→冲突消解→画像）</span>
   <span><i style="background:#fffbeb;border:1.5px solid var(--store)"></i>存储层</span>
-  <span>节点右上角小标签 = 借鉴的记忆框架</span>
+  <span>节点<b>左上角</b>标签 = 该节点从哪个库取数（<span style="color:#0369a1;font-weight:700">←PostgreSQL</span> = 个人记忆 · <span style="color:#d97706;font-weight:700">←Milvus</span> = 企业知识库），<b>右上角</b>标签 = 借鉴的记忆框架</span>
 </div>
 
 <details class="map" open>
@@ -137,12 +137,12 @@ var NODES = [
   { id:"n_user",    x:30,  y:50,  w:150, h:60, z:"user",  l:"用户消息",           s:"浏览器/测试页 · 仅 user_id" },
   { id:"n_chat",    x:30,  y:175, w:150, h:64, z:"user",  l:"FastAPI 端点",       s:"POST /api/v1/chat" },
   { id:"n_intent",  x:30,  y:300, w:150, h:60, z:"user",  l:"意图路由",           s:"时间意图? 盘点意图?" },
-  { id:"n_profile", x:285, y:38,  w:205, h:54, z:"read",  l:"L3 用户画像（常驻）", s:"user_profiles", tag:["MemGPT·Core","memgpt"] },
-  { id:"n_facts",   x:285, y:112, w:205, h:54, z:"read",  l:"L2 事实混合评分检索", s:"memory_facts · Top-8", tag:["MemGPT·Archival","memgpt"] },
-  { id:"n_epi",     x:285, y:186, w:205, h:54, z:"read",  l:"情景时间召回",       s:"chat_messages 全量日志", tag:["MemGPT·Recall","memgpt"] },
-  { id:"n_kbdocs",  x:285, y:260, w:205, h:54, z:"read",  l:"知识库·文件清单",    s:"list_docs · 60s TTL 缓存", tag:["企业知识库·清单","kb"] },
-  { id:"n_kbvec",   x:285, y:334, w:205, h:54, z:"read",  l:"知识库·语义检索",    s:"embedding → Milvus Top-4", tag:["企业知识库·RAG","kb"] },
-  { id:"n_recent",  x:285, y:408, w:205, h:54, z:"read",  l:"L0 近期 10 条",      s:"chat_messages 工作集", tag:["MemGPT·Core","memgpt"] },
+  { id:"n_profile", x:285, y:38,  w:205, h:54, z:"read",  l:"L3 用户画像（常驻）", s:"user_profiles", src:"PostgreSQL", tag:["MemGPT·Core","memgpt"] },
+  { id:"n_facts",   x:285, y:112, w:205, h:54, z:"read",  l:"L2 事实混合评分检索", s:"memory_facts · Top-8", src:"PostgreSQL", tag:["MemGPT·Archival","memgpt"] },
+  { id:"n_epi",     x:285, y:186, w:205, h:54, z:"read",  l:"情景时间召回",       s:"chat_messages 全量日志", src:"PostgreSQL", tag:["MemGPT·Recall","memgpt"] },
+  { id:"n_kbdocs",  x:285, y:260, w:205, h:54, z:"read",  l:"知识库·文件清单",    s:"list_docs · 60s TTL 缓存", src:"Milvus", tag:["企业知识库·清单","kb"] },
+  { id:"n_kbvec",   x:285, y:334, w:205, h:54, z:"read",  l:"知识库·语义检索",    s:"embedding → Milvus Top-4", src:"Milvus", tag:["企业知识库·RAG","kb"] },
+  { id:"n_recent",  x:285, y:408, w:205, h:54, z:"read",  l:"L0 近期 10 条",      s:"chat_messages 工作集", src:"PostgreSQL", tag:["MemGPT·Core","memgpt"] },
   { id:"n_asm",     x:565, y:212, w:180, h:76, z:"read",  l:"System Prompt 组装", s:"画像+属性+经验+情景+知识库", tag:["按需组装·自研","self"] },
   { id:"n_llm",     x:565, y:345, w:180, h:64, z:"llm",   l:"DeepSeek LLM",       s:"OpenAI 兼容 · deepseek-flash", tag:["DeepSeek","self"] },
   { id:"n_reply",   x:845, y:40,  w:190, h:52, z:"write", l:"① 回复落盘 L1",      s:"append-only 存档", tag:["Muse·存档无损","muse"] },
@@ -290,6 +290,15 @@ NODES.forEach(function(n) {
               "font-size":11, fill:"#64748b"}, g);
   t2.textContent = n.s;
   nodeEls[n.id] = g;
+  if (n.src) {
+    var sc = n.src==="Milvus" ? "#d97706" : "#0369a1";
+    var sw = n.src.length*6.2+14;
+    el("rect", {x:n.x, y:n.y-17, width:sw, height:14, rx:7,
+                fill:"#fff", stroke:sc, "stroke-width":1, opacity:.95}, gTags);
+    var st = el("text", {x:n.x+sw/2, y:n.y-6.5, "text-anchor":"middle",
+                "font-size":9.5, "font-weight":700, fill:sc}, gTags);
+    st.textContent = "←"+n.src;
+  }
   if (n.tag) {
     var w = n.tag[0].length*6.4+12;
     el("rect", {x:n.x+n.w-w, y:n.y-17, width:w, height:14, rx:7,
