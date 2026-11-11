@@ -120,6 +120,9 @@ def build_system_prompt(
     lines.append("5. 问\"有什么文件/哪些文档\"时，严格按【知识库文件清单】逐个盘点，不要遗漏或编造文件名。")
     lines.append("6. 用户问某段时间（昨天/前天/今天等）说了什么时，严格以【历史对话记录】标注的时间范围为准；")
     lines.append("   该时间范围内若无消息记录，就如实回答查不到，绝不能拿近期其他时间的消息冒充。")
+    lines.append("7. 所有记忆检索均按当前 user_id 过滤——你上下文中的消息与事实都属于当前用户，")
+    lines.append("   其他用户的消息不可能出现；回答\"是谁问的\"时以【历史对话记录】中的时间戳为依据，")
+    lines.append("   未检索到的条目如实说明，不要推断为\"误加\"或\"不存在\"。")
     return "\n".join(lines)
 
 
@@ -127,9 +130,13 @@ async def assemble_context(session: AsyncSession, user_id: str, query: str) -> C
     profile = await get_profile(session, user_id)
     facts = await search_facts(session, user_id, query)
     recent = await recent_messages(session, user_id)
-    ep = await recall_episodic(session, user_id, query)
+    # 指代消解的展开源: 上一轮助手回答 (此时本轮用户消息尚未落盘, recent[-1] 即上一轮回复)
+    prev_assistant = next(
+        (m.content for m in reversed(recent) if m.role == "assistant"), None
+    )
+    ep = await recall_episodic(session, user_id, query, prev_assistant_text=prev_assistant)
     episodic = ep.msgs
-    episodic_note = None
+    episodic_note = ep.note
     if ep.intent == "date":
         episodic_note = (
             f"{ep.window_label}，共召回 {len(episodic)} 条原始消息"
