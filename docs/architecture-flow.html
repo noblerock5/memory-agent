@@ -32,15 +32,16 @@
   .edge.hot { stroke:#f59e0b; stroke-width:2.6; }
   .ghost { animation:fadeout .65s forwards; }
   @keyframes fadeout { to { opacity:0; } }
-  .narr { padding:10px 28px 2px; min-height:48px; }
-  .narr .step { display:inline-block; background:var(--panel); border:1px solid var(--line);
+  .narr { padding:10px 28px 2px; height:64px; overflow:hidden; }
+  .narr .step { display:block; background:var(--panel); border:1px solid var(--line);
       border-left:4px solid var(--read); border-radius:8px; padding:7px 14px; font-size:13.5px; }
   .narr .step b { color:var(--read); }
   .narr .step .idx { color:var(--muted); font-weight:400; margin-right:8px; }
   .detail { display:grid; grid-template-columns: 5fr 7fr; gap:14px; padding:10px 28px 4px; }
   .pane { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 14px; }
   .pane h3 { margin:0 0 8px; font-size:13.5px; color:var(--muted); font-weight:600; }
-  #stepList { list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto; font-size:12.5px; }
+  #stepList { list-style:none; margin:0; padding:0; height:300px; overflow-y:scroll;
+      scrollbar-gutter:stable; font-size:12.5px; overscroll-behavior:contain; }
   #stepList li { padding:5px 8px 5px 26px; border-radius:7px; position:relative; color:var(--muted); }
   #stepList li.done { color:#94a3b8; }
   #stepList li.done::before { content:"✓"; position:absolute; left:8px; color:#16a34a; font-weight:700; }
@@ -82,7 +83,7 @@
   <button data-sc="W" style="margin-left:10px">▶ 对话→记忆：压缩蒸馏全流程</button>
 </div>
 
-<div class="stage"><svg id="cv" viewBox="0 0 1180 660" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div class="stage"><svg id="cv" viewBox="0 -44 1180 704" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div class="narr"><span class="step" id="narr">点击上方按钮开始演示…</span></div>
 
 <div class="detail">
@@ -174,13 +175,16 @@ var EDGES = [
   { id:"e_ex_co",   a:"n_extract",b:"n_conflict",sa:"b", sb:"t" },
   { id:"e_co_pu",   a:"n_conflict",b:"n_profup",sa:"b", sb:"t" },
   { id:"e_pu_pg",   a:"n_profup",b:"n_pg",      sa:"b", sb:"t" },
+  { id:"e_resp_user", a:"n_reply", b:"n_user",  sa:"t", sb:"t", dy:78,
+    label:"HTTP 响应：reply + memory 调试块 → 回到用户" },
 ];
 
 /* ---- 字段级数据卡片: 每个节点"取了什么 / 存了什么" ---- */
 var CARDS = {
-  n_user: { title:"输入：仅两个字母段", rows:[
+  n_user: { title:"入口 / 出口：与前端之间只有 user_id，没有 session", rows:[
     ["请求体", "<code>{ user_id: 'demo_user_1', message: '我叫李明，负责AI项目部' }</code>"],
-    ["没有的", "<span class='mono'>session_id / conversation_id —— 根本不存在这个字段</span>"]]},
+    ["响应体", "<code>{ reply: '回答文本', memory: { facts_injected, episodic, kb, kb_docs, changes } }</code> —— memory 调试块驱动页面右侧的记忆面板"],
+    ["回答也是记忆", "reply 原文立即存入 L1 存档；蒸馏时 user+assistant 原文一起参与，所以“我们刚才聊到哪”也能接上"]]},
   n_profile: { title:"取值：L3 画像（每轮无条件注入）", rows:[
     ["SQL", "<code>SELECT display_name FROM user_profiles WHERE user_id='demo_user_1'</code>"],
     ["返回", "<code>'李明'</code>（仅几个 token，常驻 system prompt 开头）"],
@@ -249,13 +253,13 @@ function anchor(n, side) {
   return side==="l" ? {x:n.x, y:n.y+n.h/2} : side==="r" ? {x:n.x+n.w, y:n.y+n.h/2}
        : side==="t" ? {x:n.x+n.w/2, y:n.y} : {x:n.x+n.w/2, y:n.y+n.h};
 }
-function edgePath(a, b, sa, sb) {
+function edgePath(a, b, sa, sb, dyOv) {
   var A = anchor(a, sa), B = anchor(b, sb);
   if (sa==="l" || sa==="r") {
     var dx = Math.max(40, Math.abs(B.x-A.x)*0.55), s = sa==="r"?1:-1;
     return "M"+A.x+","+A.y+" C"+(A.x+s*dx)+","+A.y+" "+(B.x-s*dx)+","+B.y+" "+B.x+","+B.y;
   }
-  var dy = Math.max(30, Math.abs(B.y-A.y)*0.55), s2 = sa==="b"?1:-1;
+  var dy = dyOv || Math.max(30, Math.abs(B.y-A.y)*0.55), s2 = sa==="b"?1:-1;
   return "M"+A.x+","+A.y+" C"+A.x+","+(A.y+s2*dy)+" "+B.x+","+(B.y-s2*dy)+" "+B.x+","+B.y;
 }
 
@@ -264,7 +268,14 @@ var edgeEls = {}, nodeEls = {};
 EDGES.forEach(function(e) {
   var a = NODES.find(function(n){ return n.id===e.a; });
   var b = NODES.find(function(n){ return n.id===e.b; });
-  edgeEls[e.id] = el("path", {d:edgePath(a,b,e.sa,e.sb), class:"edge", id:e.id}, gEdges);
+  var p = el("path", {d:edgePath(a,b,e.sa,e.sb,e.dy), class:"edge", id:e.id}, gEdges);
+  edgeEls[e.id] = p;
+  if (e.label) {
+    var mid = p.getPointAtLength(p.getTotalLength()/2);
+    var lb = el("text", {x:mid.x, y:mid.y-8, "text-anchor":"middle", "font-size":10.5,
+                "font-weight":700, fill:"#b45309"}, gEdges);
+    lb.textContent = e.label;
+  }
 });
 NODES.forEach(function(n) {
   var c = Z[n.z];
@@ -352,7 +363,9 @@ var OUTRO = [
   { p:"e_co_pu" },
   { n:"n_profup" },
   { p:"e_pu_pg" },
-  { n:"n_pg", t:"⑤ 写回 PostgreSQL —— <b>回复完成时记忆已沉淀</b>，下一轮对话即可命中" },
+  { n:"n_pg", t:"⑤ 写回 PostgreSQL —— 记忆已沉淀，<b>但流程还没结束：回答要送回用户</b>" },
+  { p:"e_resp_user", c:"#475569" },
+  { n:"n_user", t:"⑥ HTTP 响应返回：<b>reply + memory 调试块</b>（注入事实/情景召回/知识库命中/记忆变更）。回答可见，且回答本身也是记忆——reply 原文已存 L1，蒸馏时 user+assistant 原文一起参与" },
 ];
 var SCEN = {
   A: { label:"自我介绍（普通对话）", steps: [].concat(INTRO, [
@@ -401,6 +414,8 @@ var SCEN = {
     { p:"e_pu_pg" },
     { n:"n_pg", t:"落库示例：<code>identity.name=李明 (0.95)</code> · <code>exp.solution.TSV导入超时=20并发分批提交 (0.85)</code> —— 长期记忆增长是 O(话题数) 而非 O(消息数)" },
     { n:"n_mv", t:"企业知识库走独立入库链路（/api/v1/kb/upload → 分块 → 向量化 → Milvus），与个人记忆写入互不干扰" },
+    { p:"e_resp_user", c:"#475569" },
+    { n:"n_user", t:"响应返回用户：回答 + 记忆调试块 —— 本 demo 写入是同步的（响应返回时记忆已写完）；生产化将改异步（§8 路线第 1 条）" },
   ]},
 };
 
@@ -417,7 +432,6 @@ async function run(key) {
     li.className = "cur";
     li.textContent = (s.t ? s.t.replace(/<[^>]+>/g, "") : "数据流动…");
     stepList.appendChild(li);
-    if (li.scrollIntoView) li.scrollIntoView({block:"nearest"});
     if (s.n) {
       highlight(s.n);
       say(i, total, sc.label, s.t || "节点激活");
@@ -426,9 +440,10 @@ async function run(key) {
       var e0 = EDGES.find(function(e){ return e.id===s.p; });
       var zone = NODES.find(function(n){ return n.id===e0.a; }).z;
       say(i, total, sc.label, s.t || "数据流动中…");
-      await animateAlong(s.p, 760, ZC[zone]);
+      await animateAlong(s.p, 760, s.c || ZC[zone]);
     }
     li.className = "done";
+    stepList.scrollTop = stepList.scrollHeight;
   }
   say(total, total, sc.label, "✅ 流转完成 —— 知识库全员共享（global），个人记忆按 user_id 隔离，两个正交维度。");
   running = false;
