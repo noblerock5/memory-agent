@@ -104,9 +104,12 @@ def build_system_prompt(
         lines.append("")
 
     if kb_hits:
-        lines.append("【知识库片段】（从共享企业知识库语义检索得到，引用时注明文档名）")
+        lines.append("【知识库片段】（从共享企业知识库语义检索得到，相邻块已自动补全，引用时注明文档名）")
         for h in kb_hits:
-            lines.append(f"- （{h['doc_name']} #{h['chunk_index']}，相关度 {h['score']}）{h['content'][:300]}")
+            tag = "，相邻块补充" if h.get("neighbor") else ""
+            lines.append(
+                f"- （{h['doc_name']} #{h['chunk_index']}，相关度 {h['score']}{tag}）{h['content'][:600]}"
+            )
         lines.append("")
 
     if kb_docs:

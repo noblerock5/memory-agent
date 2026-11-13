@@ -185,16 +185,55 @@ def search(user_id: str, query: str, top_k: int | None = None) -> list[dict]:
             output_fields=["doc_name", "chunk_index", "content", "user_id"],
             search_params={"metric_type": "COSINE"},
         )[0]
-        return [
+        anchors = [
             {
                 "doc_name": h["entity"]["doc_name"],
                 "chunk_index": h["entity"]["chunk_index"],
                 "content": h["entity"]["content"],
                 "owner": h["entity"]["user_id"],
                 "score": round(h["distance"], 3),
+                "neighbor": False,
             }
             for h in hits
         ]
+        # 相邻块扩展: 表格/长段落常跨块, 只取锚点块会截断上下文——
+        # 对每个锚点自动补齐前后块 (同文档同归属), 去重后按阅读顺序返回
+        by_doc: dict[str, set[int]] = {}
+        for a in anchors:
+            by_doc.setdefault(a["doc_name"], set()).update(
+                {a["chunk_index"] - 1, a["chunk_index"], a["chunk_index"] + 1}
+            )
+        seen = {(a["doc_name"], a["chunk_index"]) for a in anchors}
+        merged = list(anchors)
+        for doc, idxs in by_doc.items():
+            need = sorted(i for i in idxs if i >= 0 and (doc, i) not in seen)
+            if not need:
+                continue
+            safe_doc = doc.replace("\\", "\\\\").replace('"', '\\"')
+            rows = client.query(
+                COLLECTION,
+                filter=f'doc_name == "{safe_doc}" and chunk_index in {need} and ({flt})',
+                output_fields=["doc_name", "chunk_index", "content", "user_id"],
+                limit=len(need) + 2,
+            )
+            doc_score = max(a["score"] for a in anchors if a["doc_name"] == doc)
+            for r in rows:
+                key = (r["doc_name"], r["chunk_index"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(
+                    {
+                        "doc_name": r["doc_name"],
+                        "chunk_index": r["chunk_index"],
+                        "content": r["content"],
+                        "owner": r["user_id"],
+                        "score": doc_score,
+                        "neighbor": True,
+                    }
+                )
+        merged.sort(key=lambda x: (x["doc_name"], x["chunk_index"]))
+        return merged[:14]
     except Exception as e:  # noqa: BLE001
         _state["milvus_ok"] = False
         _state["last_error"] = str(e)

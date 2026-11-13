@@ -99,6 +99,7 @@ async def chat(
                     chunk_index=h["chunk_index"],
                     content=h["content"],
                     score=h["score"],
+                    neighbor=h.get("neighbor", False),
                 )
                 for h in bundle.kb_hits
             ],

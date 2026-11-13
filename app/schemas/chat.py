@@ -35,6 +35,7 @@ class KbHit(BaseModel):
     chunk_index: int
     content: str
     score: float
+    neighbor: bool = False  # True=相邻块补充(非向量直接命中), 用于表格跨块补全调试
 
 
 class KbDocItem(BaseModel):
