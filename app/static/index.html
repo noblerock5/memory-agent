@@ -28,6 +28,15 @@
   .bubble.user { align-self: flex-end; background: var(--blue); color: #fff; border-bottom-right-radius: 4px; }
   .bubble.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
   .bubble.bot.error { border-color: #e24b4a; background: #fcebeb; }
+  .bubble.bot table { border-collapse: collapse; margin: 6px 0; font-size: 12.5px; width: 100%; }
+  .bubble.bot th, .bubble.bot td { border: 1px solid var(--border); padding: 4px 9px; text-align: left; vertical-align: top; }
+  .bubble.bot th { background: var(--blue-bg); font-weight: 600; }
+  .bubble.bot ul, .bubble.bot ol { margin: 5px 0; padding-left: 20px; }
+  .bubble.bot li { margin: 3px 0; }
+  .bubble.bot p { margin: 4px 0; }
+  .bubble.bot h3, .bubble.bot h4, .bubble.bot h5 { margin: 9px 0 4px; font-size: 14px; }
+  .bubble.bot hr { border: none; border-top: 1px dashed var(--border); margin: 8px 0; }
+  .bubble.bot code { font: 12px ui-monospace, Menlo, monospace; background: rgba(100,116,139,.13); padding: 1px 5px; border-radius: 4px; }
   .mem-debug { align-self: flex-start; max-width: 85%; font-size: 12px; background: var(--blue-bg); border-radius: 10px; padding: 8px 12px; color: #1e4290; }
   .mem-debug summary { cursor: pointer; color: var(--blue); font-weight: 500; }
   .chip { display: inline-block; background: #fff; border: 1px solid #c4d4f5; border-radius: 8px; padding: 1px 7px; margin: 2px 3px 2px 0; }
@@ -172,6 +181,57 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
+// 轻量 Markdown 渲染: 先转义再解析, 支持表格/列表/标题/加粗/行内代码 (无外部依赖)
+function renderMd(src) {
+  const inline = t => t
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  const table = rows => {
+    let h = '<table><thead><tr>' + rows[0].map(c => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>';
+    for (let r = 2; r < rows.length; r++) h += '<tr>' + rows[r].map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>';
+    return h + '</tbody></table>';
+  };
+  const out = [];
+  let para = [];
+  const flush = () => { if (para.length) { out.push('<p>' + inline(para.join('<br>')) + '</p>'); para = []; } };
+  const lines = esc(src).split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const L = lines[i].trimEnd();
+    if (/^\s*$/.test(L)) { flush(); i++; continue; }
+    if (/^\s*\|.*\|\s*$/.test(L) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      flush();
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) {
+        rows.push(lines[i].trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim())); i++;
+      }
+      out.push(rows.length >= 2 ? table(rows) : '<p>' + inline((rows[0] || []).join(' ')) + '</p>');
+      continue;
+    }
+    const h = L.match(/^(#{1,4})\s+(.*)$/);
+    if (h) { flush(); const lv = Math.min(h[1].length + 2, 5); out.push(`<h${lv}>${inline(h[2])}</h${lv}>`); i++; continue; }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(L)) { flush(); out.push('<hr>'); i++; continue; }
+    if (/^\s*[-*•]\s+/.test(L)) {
+      flush();
+      const items = [];
+      while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*•]\s+/, '')); i++; }
+      out.push('<ul>' + items.map(t => '<li>' + inline(t) + '</li>').join('') + '</ul>');
+      continue;
+    }
+    if (/^\s*\d+[\.、)）]\s+/.test(L)) {
+      flush();
+      const items = [];
+      while (i < lines.length && /^\s*\d+[\.、)）]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+[\.、)）]\s+/, '')); i++; }
+      out.push('<ol>' + items.map(t => '<li>' + inline(t) + '</li>').join('') + '</ol>');
+      continue;
+    }
+    para.push(L.trim());
+    i++;
+  }
+  flush();
+  return out.join('');
+}
+
 function renderDebug(m) {
   const div = document.createElement('div');
   div.className = 'mem-debug';
@@ -207,7 +267,7 @@ async function send() {
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const d = await resp.json();
-    waiting.textContent = d.reply;
+    waiting.innerHTML = renderMd(d.reply);
     waiting.classList.remove('loading');
     renderDebug(d.memory);
     loadMemory();
