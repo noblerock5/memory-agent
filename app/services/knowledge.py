@@ -24,9 +24,11 @@ _state = {
     "last_error": None,
     "dim": None,
     "docs_cache": None,       # (timestamp, list_docs 结果) TTL 缓存
+    "last_conn_attempt": 0.0, # 上次连接尝试时间——冷却期内不重试, 避免页面轮询刷屏
 }
 _lock = threading.Lock()
 _DOCS_CACHE_TTL = 60  # 秒; 入库后主动失效
+_CONN_COOLDOWN = 20   # 秒; 连接失败后的重试冷却
 
 
 def _get_embed_model():
@@ -47,9 +49,12 @@ def _get_milvus():
     """懒加载 Milvus 连接并确保集合存在; 失败时标记不可用."""
     if _state["milvus_client"] is not None and _state["milvus_ok"]:
         return _state["milvus_client"]
+    if time.time() - _state["last_conn_attempt"] < _CONN_COOLDOWN:
+        return None  # 冷却期内静默降级, 不重试不刷日志
     with _lock:
         if _state["milvus_client"] is not None and _state["milvus_ok"]:
             return _state["milvus_client"]
+        _state["last_conn_attempt"] = time.time()
         try:
             from pymilvus import DataType, MilvusClient
 
