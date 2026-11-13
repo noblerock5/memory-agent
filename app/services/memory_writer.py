@@ -43,11 +43,17 @@ EXTRACT_SYSTEM_PROMPT = (
     "key 的最后一段用简短主题命名, 如 exp.solution.导入超时, exp.decision.队列选型。value 要自包含"
     "(脱离上下文也能看懂), 包含'问题→结论'或'决策→原因'。\n"
     "entity 字段: 用户属性填 user; 经验结论填 exp。\n"
+    "铁律: 只从【用户当前消息】和助手针对该消息的新结论中抽取。助手回复若在复述/汇总"
+    "【历史对话记录】或引用【知识库片段】(例如'昨天聊过X''记录里有Y'), 其中出现的人名/事实"
+    "一律不要抽取——它们早已存档, 重复入库会复活已被取代的旧记忆。\n"
     "只输出 JSON 数组, 元素形如 "
     '[{"entity":"user","key":"identity.name","value":"李明","confidence":0.95}, '
     '{"entity":"exp","key":"exp.lesson.pg超时","value":"TSV大批量导入超时: 改用20并发+分批commit后稳定","confidence":0.85}], '
     "没有可抽取内容时输出 []。不要输出任何其他文字。"
 )
+
+# 代码护栏: 改名是显式言语行为——新名字必须出自用户当前消息原文, 否则不顶替 (防历史复述复活旧名)
+_NAME_CHANGE_RE = re.compile(r"我叫|叫我|改名|名字改成|名字是|名字叫|称我|昵称")
 
 
 async def append_message(
@@ -153,6 +159,13 @@ async def extract_and_store(
 
         action = "added"
         if actives and replace:
+            # 护栏: 改名是显式言语行为——新名字必须出自用户当前消息原文, 否则可能是
+            # 助手复述历史时"再蒸馏"出来的, 会把已被取代的旧事实复活 (2026-11-13 实测)
+            if key == "identity.name" and value != actives[0].value and not _NAME_CHANGE_RE.search(user_text):
+                changes.append(
+                    {"action": "skipped", "key": key, "value": value, "fact_id": None}
+                )
+                continue
             for old in actives:  # 冲突消解: 新替旧, 旧记录降级保留替代谱系, 不物理删除
                 old.status = "superseded"
                 old.valid_to = now
